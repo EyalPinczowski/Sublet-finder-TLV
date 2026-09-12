@@ -9,8 +9,14 @@ its own.**
 
 ## How it works
 
-1. `scripts/login_facebook.py` opens a real browser so you can log into
-   Facebook yourself. Your session is saved locally to `data/storage_state.json`.
+1. Log into Facebook once to create a session:
+   - **No display available (e.g. Termux/proot)**: `python scripts/login_facebook_headless.py`
+     asks for your email and password right in the terminal (password hidden)
+     and logs in headlessly. If Facebook challenges the login, it asks you
+     for the code, or tells you to approve it from your phone's Facebook app.
+   - **Normal machine with a screen**: `python scripts/login_facebook.py`
+     opens a real visible browser for you to log in.
+   Either way, the session is saved to `data/storage_state.json`.
 2. `scripts/scan.py` uses that session to open each group in `config.yaml`,
    pulls recent posts, keyword-filters them, and sends candidates to Gemini
    to screen (are they looking for housing? how good a fit?) and draft a
@@ -42,11 +48,14 @@ member of, and your keywords.
 ## Usage
 
 ```bash
-python scripts/login_facebook.py   # once, and again whenever the session expires
-python scripts/scan.py             # pulls + screens + drafts new leads
-python scripts/review.py           # approve/reject/edit drafts
-python scripts/approved.py         # get the final messages to send
+python scripts/login_facebook_headless.py   # or login_facebook.py with a screen
+python scripts/scan.py                      # pulls + screens + drafts new leads
+python scripts/review.py                    # approve/reject/edit drafts
+python scripts/approved.py                  # get the final messages to send
 ```
+
+Re-run the login script whenever the session expires (Facebook logs you out
+after a while of inactivity, or if it flags the login as suspicious).
 
 ## Important caveats
 
