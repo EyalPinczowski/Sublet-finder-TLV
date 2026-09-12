@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan configured Facebook groups for new sublet leads.
+"""Scan configured Facebook groups for apartments matching your search.
 
 Usage: python scripts/scan.py [--headed]
 """

@@ -77,8 +77,3 @@ def scrape_group(group: FacebookGroup, limit: int, headless: bool = True) -> lis
         posts = _extract_posts(page, limit=limit)
         context.close()
         return posts
-
-
-def matches_keywords(text: str, keywords: list[str]) -> bool:
-    lowered = text.lower()
-    return any(kw.lower() in lowered for kw in keywords)

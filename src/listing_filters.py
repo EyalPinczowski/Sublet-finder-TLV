@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from .config import ApartmentSearchConfig
+from .config import SearchConfig
 from .listing_models import Listing
 
 
-def matches(listing: Listing, search_cfg: ApartmentSearchConfig) -> bool:
+def matches(listing: Listing, search_cfg: SearchConfig) -> bool:
     if (
         search_cfg.price_max is not None
         and listing.price is not None
@@ -47,7 +47,7 @@ def matches(listing: Listing, search_cfg: ApartmentSearchConfig) -> bool:
     return True
 
 
-def _bathrooms_ok(listing: Listing, search_cfg: ApartmentSearchConfig) -> bool:
+def _bathrooms_ok(listing: Listing, search_cfg: SearchConfig) -> bool:
     """The bathroom rule is satisfied if ANY of: the apartment has at least
     min_bathrooms toilets, there's a toilet per roommate, or the toilet and
     shower are separate rooms and roommates <=

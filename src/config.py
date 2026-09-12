@@ -18,9 +18,8 @@ class FacebookGroup:
 
 
 @dataclass
-class ApartmentSearchConfig:
-    """Your own criteria when looking for an apartment to move INTO — the
-    mirror of `apartment`, which is what you're subletting OUT."""
+class SearchConfig:
+    """Your criteria for the apartment you're looking to sublet FROM someone."""
 
     price_min: int | None = None
     price_max: int | None = None
@@ -40,29 +39,10 @@ class TelegramConfig:
 
 @dataclass
 class Config:
-    apartment: dict
     facebook_groups: list[FacebookGroup]
-    search_keywords: list[str]
     posts_per_group: int
-    min_fit_score: int
-    gemini_api_key: str
-    apartment_search: ApartmentSearchConfig
+    search: SearchConfig
     telegram: TelegramConfig | None
-
-    @property
-    def apartment_summary(self) -> str:
-        a = self.apartment
-        lines = [
-            f"Location: {a['neighborhood']}, {a['city']}",
-            f"Rooms: {a['rooms']}",
-            f"Price: {a['price_ils_per_month']} ILS/month",
-            f"Available: {a['available_from']} to {a['available_until']}",
-            f"Furnished: {a['furnished']}",
-            f"Pets allowed: {a['pets_allowed']}",
-            f"Amenities: {', '.join(a.get('amenities', []))}",
-            f"Description: {a['description'].strip()}",
-        ]
-        return "\n".join(lines)
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -70,15 +50,8 @@ def load_config(path: Path | None = None) -> Config:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set. Copy .env.example to .env and fill it in "
-            "with a free key from https://aistudio.google.com/apikey"
-        )
-
-    search_raw = raw.get("apartment_search") or {}
-    apartment_search = ApartmentSearchConfig(
+    search_raw = raw.get("search") or {}
+    search = SearchConfig(
         price_min=search_raw.get("price_min"),
         price_max=search_raw.get("price_max"),
         min_rooms=search_raw.get("min_rooms"),
@@ -91,16 +64,13 @@ def load_config(path: Path | None = None) -> Config:
         ),
     )
 
-    telegram_raw = raw.get("telegram")
-    telegram = TelegramConfig(**telegram_raw) if telegram_raw else None
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    telegram = TelegramConfig(bot_token, chat_id) if bot_token and chat_id else None
 
     return Config(
-        apartment=raw["apartment"],
         facebook_groups=[FacebookGroup(**g) for g in raw["facebook_groups"]],
-        search_keywords=raw["search_keywords"],
         posts_per_group=raw["posts_per_group"],
-        min_fit_score=raw["min_fit_score"],
-        gemini_api_key=api_key,
-        apartment_search=apartment_search,
+        search=search,
         telegram=telegram,
     )
