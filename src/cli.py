@@ -12,8 +12,11 @@ from . import store
 from .browser import login_and_save_session
 from .config import load_config
 from .drafter import draft_message
+from .listing_filters import matches as matches_search
+from .listing_parser import is_offer_listing, parse_listing
 from .scraper import matches_keywords, scrape_group
 from .screener import screen_post
+from .telegram_notifier import send_listing
 
 console = Console()
 
@@ -31,8 +34,30 @@ def cmd_scan(args) -> None:
             console.print(f"Fetched {len(posts)} posts")
 
             for post in posts:
-                if store.post_seen(conn, post.post_url):
+                if store.post_seen(conn, post.post_url) or store.listing_seen(conn, post.post_url):
                     continue
+
+                if is_offer_listing(post.text):
+                    listing = parse_listing(
+                        post.text, post.post_url, group.name, config.apartment_search.neighborhoods
+                    )
+                    matched = matches_search(listing, config.apartment_search)
+                    listing_id = store.insert_listing(conn, listing, matched=matched)
+                    if listing_id and matched:
+                        console.print(
+                            f"[cyan]Apartment match[/] ({group.name}): "
+                            f"{listing.price or '?'} ILS, {listing.rooms or '?'} rooms"
+                        )
+                        if config.telegram:
+                            try:
+                                send_listing(
+                                    config.telegram.bot_token, config.telegram.chat_id, listing
+                                )
+                                store.mark_listing_notified(conn, listing_id)
+                            except Exception as e:
+                                console.print(f"[red]Telegram notify failed:[/] {e}")
+                    continue
+
                 if not matches_keywords(post.text, config.search_keywords):
                     continue
 
@@ -116,6 +141,26 @@ def cmd_approved(_args) -> None:
             )
 
 
+def cmd_matches(_args) -> None:
+    """List apartments found that matched your own search criteria."""
+    with store.connect() as conn:
+        listings = store.list_listings(conn, matched_only=True)
+        if not listings:
+            console.print("No matching apartments found yet.")
+            return
+        for listing in listings:
+            console.print(
+                Panel(
+                    f"[bold]{listing.price or '?'} ILS[/] · "
+                    f"{listing.rooms or '?'} rooms · "
+                    f"{listing.neighborhoods or 'area unknown'}\n"
+                    f"{listing.post_url}\n\n{listing.raw_text}",
+                    title=f"Listing #{listing.id}"
+                    + (" (notified)" if listing.notified else ""),
+                )
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="TLV apartment sublet lead agent")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -130,6 +175,9 @@ def main() -> None:
 
     sub.add_parser("review", help="Review new leads one by one").set_defaults(func=cmd_review)
     sub.add_parser("approved", help="List approved leads ready to send").set_defaults(func=cmd_approved)
+    sub.add_parser(
+        "matches", help="List apartments found matching your own search criteria"
+    ).set_defaults(func=cmd_matches)
 
     args = parser.parse_args()
     args.func(args)

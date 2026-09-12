@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -18,6 +18,27 @@ class FacebookGroup:
 
 
 @dataclass
+class ApartmentSearchConfig:
+    """Your own criteria when looking for an apartment to move INTO — the
+    mirror of `apartment`, which is what you're subletting OUT."""
+
+    price_min: int | None = None
+    price_max: int | None = None
+    min_rooms: float | None = None
+    neighborhoods: list[str] = field(default_factory=list)
+    excluded_keywords: list[str] = field(default_factory=list)
+    max_roommates: int | None = None
+    min_bathrooms: int | None = None
+    separate_toilet_shower_max_roommates: int | None = None
+
+
+@dataclass
+class TelegramConfig:
+    bot_token: str
+    chat_id: str
+
+
+@dataclass
 class Config:
     apartment: dict
     facebook_groups: list[FacebookGroup]
@@ -25,6 +46,8 @@ class Config:
     posts_per_group: int
     min_fit_score: int
     gemini_api_key: str
+    apartment_search: ApartmentSearchConfig
+    telegram: TelegramConfig | None
 
     @property
     def apartment_summary(self) -> str:
@@ -54,6 +77,23 @@ def load_config(path: Path | None = None) -> Config:
             "with a free key from https://aistudio.google.com/apikey"
         )
 
+    search_raw = raw.get("apartment_search") or {}
+    apartment_search = ApartmentSearchConfig(
+        price_min=search_raw.get("price_min"),
+        price_max=search_raw.get("price_max"),
+        min_rooms=search_raw.get("min_rooms"),
+        neighborhoods=search_raw.get("neighborhoods") or [],
+        excluded_keywords=search_raw.get("excluded_keywords") or [],
+        max_roommates=search_raw.get("max_roommates"),
+        min_bathrooms=search_raw.get("min_bathrooms"),
+        separate_toilet_shower_max_roommates=search_raw.get(
+            "separate_toilet_shower_max_roommates"
+        ),
+    )
+
+    telegram_raw = raw.get("telegram")
+    telegram = TelegramConfig(**telegram_raw) if telegram_raw else None
+
     return Config(
         apartment=raw["apartment"],
         facebook_groups=[FacebookGroup(**g) for g in raw["facebook_groups"]],
@@ -61,4 +101,6 @@ def load_config(path: Path | None = None) -> Config:
         posts_per_group=raw["posts_per_group"],
         min_fit_score=raw["min_fit_score"],
         gemini_api_key=api_key,
+        apartment_search=apartment_search,
+        telegram=telegram,
     )

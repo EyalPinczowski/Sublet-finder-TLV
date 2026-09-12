@@ -4,4 +4,7 @@ __pycache__/
 .env
 data/*.db
 data/storage_state.json
+data/login_debug.png
+data/login_debug.html
+.pytest_cache/
 .claude/

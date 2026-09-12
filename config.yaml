@@ -33,7 +33,7 @@ facebook_groups:
     url: "https://www.facebook.com/groups/278821486227658"
 
 # Keywords (Hebrew + English) used to pre-filter posts before sending them
-# to Claude for screening. Case-insensitive substring match.
+# to Gemini for screening. Case-insensitive substring match.
 search_keywords:
   - "sublet"
   - "sublease"
@@ -47,5 +47,44 @@ search_keywords:
 # How many posts to pull per group per run.
 posts_per_group: 40
 
-# Minimum fit score (0-100, assigned by Claude) for a lead to be shown to you.
+# Minimum fit score (0-100, assigned by Gemini) for a lead to be shown to you.
 min_fit_score: 50
+
+# Your own criteria when looking for an apartment to move INTO — the mirror
+# of `apartment` above. Posts offering a sublet (not seeking one) are
+# checked against this with cheap local regex matching, no Gemini calls.
+apartment_search:
+  price_min: 2500
+  price_max: 3600
+  min_rooms: null
+  # Substring match (Hebrew or English), case-insensitive. Leave empty to
+  # match any neighborhood.
+  neighborhoods:
+    - "כיכר דיזנגוף"
+    - "כיכר דיזינגוף"
+    - "dizengoff square"
+    - "כרם התימנים"
+    - "kerem hateimanim"
+    - "kerem ha teimanim"
+    - "הבימה"
+    - "habima"
+  # Posts containing any of these are dropped even if they mention sublets
+  # (useful for filtering out false positives the keyword heuristic misses).
+  excluded_keywords: []
+  # Total roommates in the apartment (including the poster), max allowed.
+  max_roommates: 3
+  # Bathroom rule — a listing passes if ANY of these hold:
+  #   - the apartment has at least min_bathrooms toilets
+  #   - there's a toilet per roommate
+  #   - the toilet and shower are separate rooms, and roommates <=
+  #     separate_toilet_shower_max_roommates
+  min_bathrooms: 2
+  separate_toilet_shower_max_roommates: 3
+
+# Optional: get an instant Telegram message when an apartment matches your
+# search above. Omit this whole section to skip Telegram and just use
+# `scripts/matches.py` to check matches manually.
+# telegram:
+#   bot_token: "PUT_YOUR_BOT_TOKEN_HERE"   # from @BotFather on Telegram
+#   chat_id: "PUT_YOUR_CHAT_ID_HERE"       # message your bot once, then check
+#                                          # https://api.telegram.org/bot<TOKEN>/getUpdates
