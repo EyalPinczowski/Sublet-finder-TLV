@@ -2,16 +2,17 @@
 
 Finds people in Facebook groups who are looking for a sublet apartment in
 Tel Aviv, screens and scores them against your specific apartment using
-Claude, drafts a personalized outreach message for each good match, and
-queues everything for you to review before anything is sent. **It never
-sends messages on its own.**
+Google's Gemini API (free tier, no credit card required), drafts a
+personalized outreach message for each good match, and queues everything
+for you to review before anything is sent. **It never sends messages on
+its own.**
 
 ## How it works
 
 1. `scripts/login_facebook.py` opens a real browser so you can log into
    Facebook yourself. Your session is saved locally to `data/storage_state.json`.
 2. `scripts/scan.py` uses that session to open each group in `config.yaml`,
-   pulls recent posts, keyword-filters them, and sends candidates to Claude
+   pulls recent posts, keyword-filters them, and sends candidates to Gemini
    to screen (are they looking for housing? how good a fit?) and draft a
    reply for the good matches. Everything is stored in `data/leads.db`
    (SQLite), so re-running never double-processes a post.
@@ -29,8 +30,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 
-cp .env.example .env   # then fill in ANTHROPIC_API_KEY
+cp .env.example .env   # then fill in GEMINI_API_KEY
 ```
+
+Get a free Gemini API key (no credit card needed) at
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 
 Edit `config.yaml` with your apartment's real details, the groups you're a
 member of, and your keywords.
@@ -59,3 +63,8 @@ python scripts/approved.py         # get the final messages to send
   stops finding posts.
 - Messages are **never sent automatically** — `scripts/approved.py` only
   prints text for you to paste in yourself.
+- The Gemini free tier is rate-limited (roughly 10-15 requests/minute,
+  a few hundred/day) and Google can change these limits without notice.
+  `scripts/scan.py` already pauses a few seconds between calls to stay
+  under them; if you hit a quota error, wait and re-run later — scanning
+  never reprocesses posts it already saw.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 from rich.console import Console
 from rich.panel import Panel
@@ -42,6 +43,7 @@ def cmd_scan(args) -> None:
                     continue  # INSERT OR IGNORE hit a duplicate race
 
                 result = screen_post(config, post.text)
+                time.sleep(5)  # stay under the Gemini free-tier rate limit
                 store.update_screening(
                     conn, lead_id, result.get("fit_score", 0), result.get("notes", "")
                 )
@@ -51,6 +53,7 @@ def cmd_scan(args) -> None:
                     continue
 
                 message = draft_message(config, post.text, result.get("notes", ""))
+                time.sleep(5)  # stay under the Gemini free-tier rate limit
                 store.update_draft(conn, lead_id, message)
                 console.print(f"[green]New lead[/] (score {result['fit_score']}): {post.author}")
 

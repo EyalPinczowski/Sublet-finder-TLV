@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from anthropic import Anthropic
+from google import genai
+from google.genai import types
 
 from .config import Config
 
-MODEL = "claude-sonnet-5"
+MODEL = "gemini-flash-latest"  # free-tier eligible
 
 DRAFT_SYSTEM_PROMPT = """\
 You write short, warm, natural outreach messages (in the same language as \
@@ -19,20 +20,17 @@ their name isn't clearly known. Output only the message text, nothing else.
 
 
 def draft_message(config: Config, post_text: str, screening_notes: str) -> str:
-    client = Anthropic(api_key=config.anthropic_api_key)
-    message = client.messages.create(
+    client = genai.Client(api_key=config.gemini_api_key)
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=300,
-        system=DRAFT_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Apartment details:\n{config.apartment_summary}\n\n"
-                    f"Their post:\n{post_text}\n\n"
-                    f"Screening notes:\n{screening_notes}"
-                ),
-            }
-        ],
+        contents=(
+            f"Apartment details:\n{config.apartment_summary}\n\n"
+            f"Their post:\n{post_text}\n\n"
+            f"Screening notes:\n{screening_notes}"
+        ),
+        config=types.GenerateContentConfig(
+            system_instruction=DRAFT_SYSTEM_PROMPT,
+            max_output_tokens=300,
+        ),
     )
-    return message.content[0].text.strip()
+    return response.text.strip()

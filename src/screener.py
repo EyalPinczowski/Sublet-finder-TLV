@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 
-from anthropic import Anthropic
+from google import genai
+from google.genai import types
 
 from .config import Config
 
-MODEL = "claude-sonnet-5"
+MODEL = "gemini-flash-latest"  # free-tier eligible
 
 SCREEN_SYSTEM_PROMPT = """\
 You screen Facebook group posts to find people looking for a sublet apartment \
@@ -21,29 +22,38 @@ English, or mixed). Decide:
    or offering one themselves, 100 = excellent match).
 3. Briefly note any extracted details (desired dates, budget, number of \
    people, area preference) and why the score is what it is.
-
-Respond ONLY with JSON: {"is_seeking_apartment": bool, "fit_score": int, "notes": str}
 """
+
+SCREEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_seeking_apartment": {"type": "boolean"},
+        "fit_score": {"type": "integer"},
+        "notes": {"type": "string"},
+    },
+    "required": ["is_seeking_apartment", "fit_score", "notes"],
+}
 
 
 def screen_post(config: Config, post_text: str) -> dict:
-    client = Anthropic(api_key=config.anthropic_api_key)
-    message = client.messages.create(
+    client = genai.Client(api_key=config.gemini_api_key)
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=500,
-        system=SCREEN_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Apartment details:\n{config.apartment_summary}\n\n"
-                    f"Post text:\n{post_text}"
-                ),
-            }
-        ],
+        contents=(
+            f"Apartment details:\n{config.apartment_summary}\n\n"
+            f"Post text:\n{post_text}"
+        ),
+        config=types.GenerateContentConfig(
+            system_instruction=SCREEN_SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            response_json_schema=SCREEN_SCHEMA,
+        ),
     )
-    text = message.content[0].text
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {"is_seeking_apartment": False, "fit_score": 0, "notes": f"Unparseable response: {text}"}
+        return json.loads(response.text)
+    except (json.JSONDecodeError, TypeError):
+        return {
+            "is_seeking_apartment": False,
+            "fit_score": 0,
+            "notes": f"Unparseable response: {response.text}",
+        }

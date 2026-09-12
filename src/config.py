@@ -24,7 +24,7 @@ class Config:
     search_keywords: list[str]
     posts_per_group: int
     min_fit_score: int
-    anthropic_api_key: str
+    gemini_api_key: str
 
     @property
     def apartment_summary(self) -> str:
@@ -47,10 +47,11 @@ def load_config(path: Path | None = None) -> Config:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in."
+            "GEMINI_API_KEY is not set. Copy .env.example to .env and fill it in "
+            "with a free key from https://aistudio.google.com/apikey"
         )
 
     return Config(
@@ -59,5 +60,5 @@ def load_config(path: Path | None = None) -> Config:
         search_keywords=raw["search_keywords"],
         posts_per_group=raw["posts_per_group"],
         min_fit_score=raw["min_fit_score"],
-        anthropic_api_key=api_key,
+        gemini_api_key=api_key,
     )
