@@ -1,0 +1,45 @@
+# Details about the apartment you're subletting.
+# Fill these in accurately — they're sent to Claude for screening and drafting.
+apartment:
+  neighborhood: "Florentin"
+  city: "Tel Aviv"
+  rooms: 2
+  price_ils_per_month: 6500
+  available_from: "2026-10-01"
+  available_until: "2026-12-31"
+  furnished: true
+  pets_allowed: false
+  amenities:
+    - "balcony"
+    - "AC in every room"
+    - "5 min walk to Rothschild"
+  description: >
+    Bright 2-room apartment in Florentin, quiet street, fully furnished,
+    fast wifi included. Looking for a quiet tenant for a 3-month sublet
+    while I'm abroad.
+
+# Facebook groups to monitor. Use the group's numeric ID or the URL slug
+# exactly as it appears in the group's Facebook URL.
+facebook_groups:
+  - name: "Secret Tel Aviv"
+    url: "https://www.facebook.com/groups/SecretTelAviv"
+  - name: "TLV Sublet Group"  # rename to match the group's real title
+    url: "https://www.facebook.com/groups/1253641912158395"
+
+# Keywords (Hebrew + English) used to pre-filter posts before sending them
+# to Claude for screening. Case-insensitive substring match.
+search_keywords:
+  - "sublet"
+  - "sublease"
+  - "looking for apartment"
+  - "looking for a room"
+  - "מחפש דירה"
+  - "מחפשת דירה"
+  - "מחפשים דירה"
+  - "סאבלט"
+
+# How many posts to pull per group per run.
+posts_per_group: 40
+
+# Minimum fit score (0-100, assigned by Claude) for a lead to be shown to you.
+min_fit_score: 50
