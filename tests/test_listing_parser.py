@@ -1,4 +1,4 @@
-from src.listing_parser import is_offer_listing, parse_listing
+from src.listing_parser import _extract_address, _extract_phone, is_offer_listing, parse_listing
 
 
 def test_is_offer_listing_detects_hebrew_offer():
@@ -95,3 +95,38 @@ def test_parse_listing_detects_separate_toilet_shower():
     )
 
     assert listing.separate_toilet_shower is True
+
+
+def test_extract_phone_normalizes_local_format():
+    assert _extract_phone("סאבלט בפלורנטין, 050-1234567") == "050-1234567"
+
+
+def test_extract_phone_normalizes_international_format():
+    assert _extract_phone("call me at +972-50-1234567") == "050-1234567"
+
+
+def test_extract_phone_returns_none_without_a_number():
+    assert _extract_phone("סאבלט בפלורנטין, פנו בפרטי") is None
+
+
+def test_extract_address_finds_street_and_number():
+    assert _extract_address("דיזנגוף 120, 3000 שקל") == "דיזנגוף 120"
+
+
+def test_extract_address_skips_stopword_phrases():
+    assert _extract_address("קומה 3, 3000 שקל") is None
+
+
+def test_parse_listing_populates_phone_address_summary_and_images():
+    listing = parse_listing(
+        "דיזנגוף 120, 050-1234567, 3000 שקל",
+        post_url="https://facebook.com/groups/1/posts/7",
+        group_name="Secret Tel Aviv",
+        known_neighborhoods=[],
+        images=["https://example.com/a.jpg"],
+    )
+
+    assert listing.phone == "050-1234567"
+    assert listing.address == "דיזנגוף 120"
+    assert listing.images == ["https://example.com/a.jpg"]
+    assert listing.summary is not None

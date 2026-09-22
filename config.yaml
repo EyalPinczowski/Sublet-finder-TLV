@@ -15,6 +15,33 @@ facebook_groups:
 # How many posts to pull per group per run.
 posts_per_group: 40
 
+# LLM-based extraction (Gemini free tier) — far more reliable than the
+# regex parser on colloquial Hebrew, and adds offer/seeker classification,
+# a real one-line summary, and phone/address extraction. Falls back to the
+# regex parser automatically when GEMINI_API_KEY is unset (see .env.example),
+# the daily budget is spent, or a call errors — never a hard failure.
+llm:
+  enabled: true
+  # Client-side ceiling so we stop before Google's own free-tier daily cap
+  # (500 requests/day/model as of 2026). This tool's volume (a handful of
+  # groups, one scan at a time) won't come close in normal use; this is a
+  # safety margin, not a tuned value.
+  daily_budget: 400
+  # Minimum seconds between Gemini calls, to stay under the free tier's
+  # requests-per-minute limit.
+  min_interval_seconds: 4.5
+
+# Zone scoring: how "close" a listing is to a place you care about,
+# measured as straight-line distance (no walk-time/routing). A listing
+# within max_distance_meters of the target counts as a location match even
+# if its address text doesn't mention any of search.neighborhoods below.
+zone:
+  target_label: "Dizengoff Square"
+  # Approximate — adjust to taste.
+  target_lat: 32.0768
+  target_lon: 34.7742
+  max_distance_meters: 1000
+
 # Your criteria for the apartment you're looking to sublet FROM someone.
 # Posts offering a sublet (not seeking one) are checked against this with
 # cheap local regex matching — no API calls, fully free.

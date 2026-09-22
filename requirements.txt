@@ -3,3 +3,11 @@ pyyaml>=6.0
 rich>=13.0
 python-dotenv>=1.0
 requests>=2.31
+
+# --- LLM-based extraction (optional; falls back to the regex parser
+# when GEMINI_API_KEY is unset) ---
+google-genai>=1.0,<2
+pydantic>=2.0,<3
+
+# --- Google Sheets sink (optional; no-op when GOOGLE_SHEET_ID is unset) ---
+gspread>=6.0,<7

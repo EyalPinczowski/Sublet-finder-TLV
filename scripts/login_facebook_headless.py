@@ -16,7 +16,6 @@ import sys
 import time
 
 import _bootstrap  # noqa: F401
-
 from playwright.sync_api import Page, sync_playwright
 
 from src.browser import STORAGE_STATE_PATH

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from .config import SearchConfig
+from .config import SearchConfig, ZoneConfig
 from .listing_models import Listing
+from .zones import within_zone
 
 
-def matches(listing: Listing, search_cfg: SearchConfig) -> bool:
+def matches(listing: Listing, search_cfg: SearchConfig, zone_cfg: ZoneConfig | None = None) -> bool:
     if (
         search_cfg.price_max is not None
         and listing.price is not None
@@ -27,7 +28,12 @@ def matches(listing: Listing, search_cfg: SearchConfig) -> bool:
         return False
 
     if search_cfg.neighborhoods and not listing.neighborhoods_mentioned:
-        return False
+        # A neighborhood-keyword miss is still a match if the listing
+        # geocoded within the configured zone radius (see zones.py) — the
+        # two are OR'd so a missing/failed geocode never regresses the
+        # existing keyword-only behavior.
+        if not (zone_cfg and within_zone(listing.distance_m, zone_cfg)):
+            return False
 
     if search_cfg.excluded_keywords:
         lowered = listing.raw_text.lower()

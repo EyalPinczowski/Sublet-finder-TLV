@@ -14,3 +14,20 @@ class Listing:
     roommates: int | None = None
     toilets: int | None = None
     separate_toilet_shower: bool = False
+    # The free-text address/area as written in the post (distinct from
+    # neighborhoods_mentioned, which is only the matched-keyword subset).
+    address: str | None = None
+    # Normalized Israeli mobile, "05X-XXXXXXX", or the raw contact text if
+    # it doesn't look like one.
+    phone: str | None = None
+    # Post image URLs, for sending as a Telegram photo/album.
+    images: list[str] = field(default_factory=list)
+    # A one-line human summary — the LLM's summary when available, else a
+    # trimmed excerpt of raw_text.
+    summary: str | None = None
+    # Filled in by geocoding + zone scoring (src/geocode.py, src/zones.py).
+    lat: float | None = None
+    lon: float | None = None
+    distance_m: float | None = None
+    # Filled in by src/scoring.py.
+    score: int | None = None

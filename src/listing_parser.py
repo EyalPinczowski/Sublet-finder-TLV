@@ -42,6 +42,39 @@ SEPARATE_TOILET_SHOWER_KEYWORDS = [
     "טואלט נפרד",
 ]
 
+# Israeli mobile numbers, tolerating spaces/dots/dashes and a +972/972/0
+# prefix. Best-effort — used only when the LLM path (llm_extractor.py) isn't
+# available, mirroring bgu-housing-bot's _normalize_phone.
+_PHONE_CHUNK_RE = re.compile(r"(?:\+?972|0)[\d\s().\-]{7,}")
+
+
+def _extract_phone(text: str) -> str | None:
+    for chunk in _PHONE_CHUNK_RE.findall(text):
+        digits = re.sub(r"\D", "", chunk)
+        if digits.startswith("972"):
+            digits = "0" + digits[3:]
+        if len(digits) == 10 and digits.startswith("05"):
+            return f"{digits[:3]}-{digits[3:]}"
+    return None
+
+
+# A weak fallback address heuristic: "<Hebrew word(s)> <house number>", e.g.
+# "דיזנגוף 12" or "רוטשילד 45". Only used when the LLM path isn't available
+# (llm_extractor.py does a far more reliable job of this). Common
+# non-address phrases that follow the same shape ("קומה 3", "3 דקות") are
+# excluded via a small stoplist to cut down on false positives.
+_ADDRESS_RE = re.compile(r"([א-ת]{2,}(?:\s[א-ת]{2,}){0,2})\s+(\d{1,3})\b")
+_ADDRESS_STOPWORDS = {"קומה", "חדרים", "חדר", "דקות", "דקה", "מטר", "מטרים", "שותפים", "שותף"}
+
+
+def _extract_address(text: str) -> str | None:
+    for match in _ADDRESS_RE.finditer(text):
+        words = match.group(1).split()
+        if words and words[-1] in _ADDRESS_STOPWORDS:
+            continue
+        return f"{match.group(1)} {match.group(2)}"
+    return None
+
 
 def is_offer_listing(text: str) -> bool:
     """True if a post looks like someone OFFERING a sublet (not seeking one)."""
@@ -89,9 +122,26 @@ def _has_separate_toilet_shower(text: str) -> bool:
     return any(k.lower() in lowered for k in SEPARATE_TOILET_SHOWER_KEYWORDS)
 
 
+EXCERPT_LIMIT = 300
+
+
+def _summarize(text: str) -> str:
+    """A trimmed excerpt of the raw text — the fallback summary when the LLM
+    path (which writes a real one-line summary) isn't available."""
+    excerpt = " ".join(text.split())
+    if len(excerpt) > EXCERPT_LIMIT:
+        excerpt = excerpt[:EXCERPT_LIMIT] + "…"
+    return excerpt
+
+
 def parse_listing(
-    text: str, post_url: str, group_name: str, known_neighborhoods: list[str]
+    text: str,
+    post_url: str,
+    group_name: str,
+    known_neighborhoods: list[str],
+    images: list[str] | None = None,
 ) -> Listing:
+    address = _extract_address(text)
     return Listing(
         post_url=post_url,
         group_name=group_name,
@@ -102,4 +152,8 @@ def parse_listing(
         roommates=_extract_roommates(text),
         toilets=_extract_toilets(text),
         separate_toilet_shower=_has_separate_toilet_shower(text),
+        address=address,
+        phone=_extract_phone(text),
+        images=images or [],
+        summary=_summarize(text),
     )

@@ -1,4 +1,4 @@
-from src.config import SearchConfig
+from src.config import SearchConfig, ZoneConfig
 from src.listing_filters import matches
 from src.listing_models import Listing
 
@@ -116,3 +116,25 @@ def test_bathroom_rule_passes_through_with_no_info():
     listing = make_listing(toilets=None, roommates=None, separate_toilet_shower=False)
     cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
     assert matches(listing, cfg) is True
+
+
+def test_zone_match_rescues_a_neighborhood_keyword_miss():
+    # No neighborhood keyword hit, but the listing geocoded within the
+    # configured zone radius — the OR path from geocode.py/zones.py.
+    listing = make_listing(neighborhoods_mentioned=[], distance_m=400)
+    cfg = SearchConfig(neighborhoods=["florentin", "rothschild"])
+    zone = ZoneConfig(target_lat=32.0768, target_lon=34.7742, max_distance_meters=1000)
+    assert matches(listing, cfg, zone) is True
+
+
+def test_zone_match_does_not_rescue_when_too_far():
+    listing = make_listing(neighborhoods_mentioned=[], distance_m=5000)
+    cfg = SearchConfig(neighborhoods=["florentin", "rothschild"])
+    zone = ZoneConfig(target_lat=32.0768, target_lon=34.7742, max_distance_meters=1000)
+    assert matches(listing, cfg, zone) is False
+
+
+def test_missing_zone_config_never_regresses_keyword_only_behavior():
+    listing = make_listing(neighborhoods_mentioned=[], distance_m=100)
+    cfg = SearchConfig(neighborhoods=["florentin", "rothschild"])
+    assert matches(listing, cfg, zone_cfg=None) is False

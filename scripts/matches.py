@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""List apartments found matching your own search criteria (config.yaml's
-apartment_search section) — the mirror of scripts/approved.py, which lists
-subletters found for your own apartment.
+"""List apartments found matching your search criteria (config.yaml's
+search section), best score first.
 
 Usage: python scripts/matches.py
 """
