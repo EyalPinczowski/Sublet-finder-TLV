@@ -12,6 +12,7 @@ data/dashboard_token.txt
 data/scan_state.json
 data/checkpoint_*.png
 data/scan.log
+data/bot_listener.log
 data/site/
 auth/
 .pytest_cache/
