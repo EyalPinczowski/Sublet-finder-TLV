@@ -45,7 +45,12 @@ def _get_sheet():
 
         client = gspread.service_account(filename=str(SERVICE_ACCOUNT_PATH))
         sheet = client.open_by_key(sheet_id).sheet1
-        if not sheet.get_all_values():
+        # A brand-new Google Sheet isn't truly "empty" to the API — it
+        # returns a single row of blank-string cells rather than [], so a
+        # bare `not get_all_values()` check never fires and the header is
+        # skipped. Check for any actual content instead.
+        has_content = any(any(cell.strip() for cell in row) for row in sheet.get_all_values())
+        if not has_content:
             sheet.append_row(HEADER)
         _sheet = sheet
     except Exception as exc:
