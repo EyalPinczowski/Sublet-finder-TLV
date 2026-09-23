@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import os
 import secrets
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -24,6 +25,7 @@ from urllib.parse import parse_qs, quote, urlparse
 import _bootstrap  # noqa: F401
 
 from src import store
+from src.geocode import map_url as build_map_url
 
 TOKEN_PATH = Path(__file__).resolve().parent.parent / "data" / "dashboard_token.txt"
 
@@ -41,6 +43,29 @@ def _get_token() -> str:
     return token
 
 
+def _is_small(available_rooms: int | None) -> bool:
+    """1-2 available rooms — small enough to be worth calling out
+    separately, both as a distinct marker color on the map and a badge
+    on each card."""
+    return available_rooms in (1, 2)
+
+
+def _suitable_label(available_rooms: int | None) -> str:
+    if available_rooms is None:
+        return ""
+    if available_rooms == 1:
+        return "1 person"
+    return f"{available_rooms} people"
+
+
+def _suitable_badge_html(available_rooms: int | None) -> str:
+    label = _suitable_label(available_rooms)
+    if not label:
+        return ""
+    css_class = "suitable-small" if _is_small(available_rooms) else "suitable-other"
+    return f'<span class="{css_class}">{html.escape(label)}</span>'
+
+
 def _card(row, token: str, score: int) -> str:
     images = row.image_urls()
     img_html = f'<img src="{html.escape(images[0])}">' if images else ""
@@ -49,9 +74,16 @@ def _card(row, token: str, score: int) -> str:
         if row.post_url.startswith("http")
         else ""
     )
+    map_link = build_map_url(row.address, row.lat, row.lon)
+    map_link_html = (
+        f' &middot; <a href="{html.escape(map_link)}" target="_blank">Google Maps</a>'
+        if map_link
+        else ""
+    )
     post_q = quote(row.post_url, safe="")
     profiles = ", ".join(row.profile_names()) or "?"
     price = f"{row.price} ILS" if row.price is not None else "Price not listed"
+    suitable_html = _suitable_badge_html(row.available_rooms)
     stay = " &middot; ".join(
         part
         for part in [
@@ -65,12 +97,12 @@ def _card(row, token: str, score: int) -> str:
     <div class="card">
       {img_html}
       <h3>{price} &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>
-      <p class="matched">Matched: {html.escape(profiles)}</p>
+      <p class="matched">Matched: {html.escape(profiles)}</p>{suitable_html}
       {stay_html}
       <p class="addr">{html.escape(row.address or row.neighborhoods or 'area unknown')}</p>
       <p>{html.escape(row.summary or row.raw_text[:200])}</p>
       <p>{html.escape(row.phone or '')}</p>
-      {post_link}
+      {post_link}{map_link_html}
       <p class="actions">
         <a href="/vote?token={token}&amp;action=save&amp;post={post_q}">⭐ Save</a>
         &nbsp;
@@ -80,10 +112,82 @@ def _card(row, token: str, score: int) -> str:
     """
 
 
+# Leaflet + OpenStreetMap: no API key needed, unlike the Google Maps JS
+# API — fits this project's existing "free, no-key" pattern (geocode.py's
+# own Nominatim use). Markers still deep-link out to Google Maps/the
+# original post; only the map widget itself is Leaflet.
+_MAP_SCRIPT_TEMPLATE = """
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<div id="map" style="height:420px;border-radius:8px;margin-bottom:1.5rem;"></div>
+<script>
+const markers = __MARKERS_JSON__;
+const map = L.map('map').setView([32.0768, 34.7742], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+const bounds = [];
+markers.forEach(function (m) {
+  const color = m.category === 'small' ? '#2ecc71' : '#3498db';
+  const marker = L.circleMarker([m.lat, m.lon], {
+    radius: 8, color: color, fillColor: color, fillOpacity: 0.85, weight: 2
+  }).addTo(map);
+  let popup = '<b>' + m.price_label + '</b> &middot; score ' + m.score;
+  if (m.suitable) { popup += '<br>' + m.suitable; }
+  if (m.post_url) {
+    popup += '<br><a href="' + m.post_url + '" target="_blank">View post</a>';
+  }
+  if (m.map_link) {
+    popup += ' &middot; <a href="' + m.map_link + '" target="_blank">Google Maps</a>';
+  }
+  marker.bindPopup(popup);
+  bounds.push([m.lat, m.lon]);
+});
+if (bounds.length) { map.fitBounds(bounds, { padding: [30, 30] }); }
+</script>
+"""
+
+
+def _map_markers(rows, scores: dict) -> list[dict]:
+    """One entry per matched listing with known coordinates — listings
+    without a geocoded address just don't get a marker, same as they
+    already don't get a distance score."""
+    markers = []
+    for row in rows:
+        if row.lat is None or row.lon is None:
+            continue
+        markers.append(
+            {
+                "lat": row.lat,
+                "lon": row.lon,
+                "price_label": f"{row.price} ILS" if row.price is not None else "Price not listed",
+                "score": scores[row.post_url],
+                "suitable": _suitable_label(row.available_rooms),
+                "post_url": row.post_url if row.post_url.startswith("http") else "",
+                "map_link": build_map_url(row.address, row.lat, row.lon) or "",
+                "category": "small" if _is_small(row.available_rooms) else "other",
+            }
+        )
+    return markers
+
+
+def _render_map(rows, scores: dict) -> str:
+    markers = _map_markers(rows, scores)
+    if not markers:
+        return ""
+    # json.dumps() already escapes for safe embedding in a <script> tag;
+    # the extra "<" escape guards against a "</script" sequence hiding in
+    # an address/summary string from ending the tag early.
+    markers_json = json.dumps(markers).replace("<", "\\u003c")
+    return _MAP_SCRIPT_TEMPLATE.replace("__MARKERS_JSON__", markers_json)
+
+
 def render_page(conn, token: str) -> str:
     rows = store.list_listings(conn, matched_only=True)
     scores = store.effective_scores(conn, rows)
     rows.sort(key=lambda r: scores[r.post_url], reverse=True)
+    map_html = _render_map(rows, scores)
     cards = (
         "".join(_card(row, token, scores[row.post_url]) for row in rows)
         or "<p>No matches yet.</p>"
@@ -96,11 +200,16 @@ body {{ font-family: sans-serif; max-width: 700px; margin: 2rem auto; padding: 0
 .addr {{ font-weight: bold; }}
 .matched {{ display: inline-block; background: #eef; border-radius: 4px; padding: 0.1rem 0.5rem;
             font-size: 0.85em; }}
+.suitable-small {{ display: inline-block; background: #d4f7dc; color: #1b7a34; border-radius: 4px;
+                    padding: 0.1rem 0.5rem; font-size: 0.85em; margin-left: 0.4rem; }}
+.suitable-other {{ display: inline-block; background: #eef; color: #334; border-radius: 4px;
+                    padding: 0.1rem 0.5rem; font-size: 0.85em; margin-left: 0.4rem; }}
 img {{ max-width: 100%; border-radius: 4px; }}
 .actions a {{ text-decoration: none; }}
 </style></head>
 <body>
 <h1>TLV Sublet Matches ({len(rows)})</h1>
+{map_html}
 {cards}
 </body></html>"""
 

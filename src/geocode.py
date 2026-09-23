@@ -10,6 +10,7 @@ import json
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import requests
 
@@ -66,6 +67,24 @@ def _pace() -> None:
     if gap > 0:
         time.sleep(gap)
     _last_call = time.monotonic()
+
+
+def map_url(
+    address: Optional[str], lat: Optional[float] = None, lon: Optional[float] = None
+) -> Optional[str]:
+    """A tappable Google Maps link for a listing — from its address when
+    known (a search query resolves better for an apartment than raw
+    coordinates, e.g. shows the building rather than a mid-street point),
+    else its geocoded lat/lon, else None. Shared by telegram_notifier.py
+    and dashboard.py so a listing's map link is never computed two
+    different ways."""
+    if address:
+        return "https://www.google.com/maps/search/?api=1&query=" + quote(
+            f"{address}, Tel Aviv"
+        )
+    if lat is not None and lon is not None:
+        return f"https://www.google.com/maps?q={lat},{lon}"
+    return None
 
 
 def geocode(address: str) -> Optional[tuple[float, float]]:

@@ -56,6 +56,24 @@ def test_geocode_caches_and_does_not_re_request(tmp_path, monkeypatch):
     assert mock_get.call_count == 1
 
 
+def test_map_url_prefers_address_over_coordinates():
+    url = geocode.map_url("Dizengoff 120", 32.0768, 34.7742)
+    assert url is not None
+    assert url.startswith("https://www.google.com/maps/search/?api=1&query=")
+    assert "Dizengoff" in url
+    assert "32.0768" not in url
+
+
+def test_map_url_falls_back_to_coordinates_without_address():
+    url = geocode.map_url(None, 32.0768, 34.7742)
+    assert url == "https://www.google.com/maps?q=32.0768,34.7742"
+
+
+def test_map_url_none_without_address_or_coordinates():
+    assert geocode.map_url(None, None, None) is None
+    assert geocode.map_url("") is None
+
+
 def test_geocode_persists_cache_to_disk(tmp_path, monkeypatch):
     _isolate_cache(tmp_path, monkeypatch)
     with patch(

@@ -59,6 +59,115 @@ def test_render_page_excludes_dismissed_listings(isolated_db):
     assert "No matches yet" in page
 
 
+def test_render_page_shows_map_marker_for_geocoded_listing(isolated_db):
+    with store.connect() as conn:
+        listing = Listing(
+            post_url="https://facebook.com/groups/1/posts/3",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=3300,
+            address="דיזנגוף 120",
+            lat=32.0768,
+            lon=34.7742,
+            score=80,
+        )
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    assert 'id="map"' in page
+    assert "leaflet" in page.lower()
+    assert "32.0768" in page
+    assert "34.7742" in page
+
+
+def test_render_page_omits_map_when_no_listing_has_coordinates(isolated_db):
+    with store.connect() as conn:
+        _seed(conn)  # no lat/lon
+        page = dashboard.render_page(conn, "tok")
+    assert 'id="map"' not in page
+
+
+def test_render_page_marks_one_or_two_person_listings_small(isolated_db):
+    with store.connect() as conn:
+        small = Listing(
+            post_url="https://facebook.com/groups/1/posts/4",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=3300,
+            lat=32.0768,
+            lon=34.7742,
+            available_rooms=1,
+            score=80,
+        )
+        other = Listing(
+            post_url="https://facebook.com/groups/1/posts/5",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=3300,
+            lat=32.08,
+            lon=34.78,
+            available_rooms=3,
+            score=70,
+        )
+        store.insert_listing(conn, small, matched_profiles=["default"])
+        store.insert_listing(conn, other, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    assert '"category": "small"' in page
+    assert '"category": "other"' in page
+    assert '<span class="suitable-small">' in page
+    assert '<span class="suitable-other">' in page
+
+
+def test_render_page_omits_suitable_badge_when_available_rooms_unknown(isolated_db):
+    with store.connect() as conn:
+        _seed(conn)  # no available_rooms
+        page = dashboard.render_page(conn, "tok")
+    # The stylesheet always defines these classes; what must be absent is
+    # an actual badge span using them.
+    assert '<span class="suitable-small">' not in page
+    assert '<span class="suitable-other">' not in page
+
+
+def test_render_page_includes_google_maps_link_for_known_address(isolated_db):
+    with store.connect() as conn:
+        listing = _seed(conn)  # has address="דיזנגוף 120"
+        page = dashboard.render_page(conn, "tok")
+    assert "Google Maps" in page
+    assert "google.com/maps" in page
+    assert listing.post_url in page  # "View post" link still present too
+
+
+def test_render_page_omits_google_maps_link_without_address_or_coordinates(isolated_db):
+    with store.connect() as conn:
+        listing = Listing(
+            post_url="https://facebook.com/groups/1/posts/6",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=3300,
+            score=80,
+        )
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    assert "Google Maps" not in page
+
+
+def test_render_page_escapes_script_breakout_in_marker_json(isolated_db):
+    with store.connect() as conn:
+        listing = Listing(
+            post_url="https://facebook.com/groups/1/posts/7",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=3300,
+            address="דיזנגוף 120",
+            lat=32.0768,
+            lon=34.7742,
+            summary="nice place</script><script>alert(1)</script>",
+            score=80,
+        )
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    assert "</script><script>alert(1)</script>" not in page
+
+
 def test_get_token_uses_env_var(monkeypatch, tmp_path):
     monkeypatch.setattr(dashboard, "TOKEN_PATH", tmp_path / "dashboard_token.txt")
     monkeypatch.setenv("DASHBOARD_TOKEN", "explicit-token")

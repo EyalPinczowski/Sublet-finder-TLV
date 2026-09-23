@@ -6,6 +6,7 @@ import requests
 
 from . import store
 from .config import SearchConfig
+from .geocode import map_url
 from .listing_models import Listing
 from .scoring import stars
 
@@ -26,18 +27,6 @@ def _contact_link(phone: str | None) -> str | None:
     digits = re.sub(r"\D", "", phone)
     if len(digits) == 10 and digits.startswith("05"):
         return "https://wa.me/972" + digits[1:]
-    return None
-
-
-def _map_url(listing: Listing) -> str | None:
-    if listing.address:
-        from urllib.parse import quote
-
-        return "https://www.google.com/maps/search/?api=1&query=" + quote(
-            f"{listing.address}, Tel Aviv"
-        )
-    if listing.lat is not None and listing.lon is not None:
-        return f"https://www.google.com/maps?q={listing.lat},{listing.lon}"
     return None
 
 
@@ -89,9 +78,9 @@ def format_alert(listing: Listing, profile: SearchConfig, score: int) -> str:
     if listing.post_url and listing.post_url.startswith("http"):
         lines.append(f"\U0001F517 {listing.post_url}")
 
-    map_url = _map_url(listing)
-    if map_url:
-        lines.append(f"\U0001F5FA️ {map_url}")
+    map_link = map_url(listing.address, listing.lat, listing.lon)
+    if map_link:
+        lines.append(f"\U0001F5FA️ {map_link}")
 
     wa = _contact_link(listing.phone)
     if wa:

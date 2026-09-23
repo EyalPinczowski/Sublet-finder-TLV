@@ -316,6 +316,15 @@ route requires `?token=<DASHBOARD_TOKEN>` — there is no unauthenticated mode,
 since listings carry addresses and phone numbers. Binds to `127.0.0.1` only:
 **LAN/local-only by design, never expose this port to the internet.**
 
+Above the list, a map (Leaflet + OpenStreetMap — free, no API key) plots
+every currently-valid match that has a known location: green markers for
+listings suitable for 1-2 people, blue for everything else, each one's
+popup showing price and score. Every marker and card also links out to
+**Google Maps** (from the listing's address when known, else its
+coordinates) and to the **original Facebook post**. A listing without a
+geocoded address just doesn't get a marker — it still shows up in the card
+list below.
+
 ### Publishing a snapshot
 
 ```bash
