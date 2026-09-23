@@ -119,29 +119,30 @@ def matches_without_location(
 
     if stay_cfg is not None:
         start, duration = _resolve_dates(listing, today=today)
-        # HARD gate — unlike every other field in this function, dates are
-        # REQUIRED, not soft-optional: a listing with no date/duration info
-        # at all is dropped rather than shown as a maybe. Deliberate
-        # exception to this tool's usual "missing data passes" rule; see
-        # README "Stay length and dates".
-        if duration is None:
-            return False
-        if duration < stay_cfg.min_days:
+        # Dates are soft-optional, like every other field in this function —
+        # a listing with no date/duration info at all still passes (no
+        # longer a hard gate; see README "Stay length and dates"). The
+        # minimum-stay and search-window checks below still apply whenever
+        # that specific piece of info IS known.
+        if duration is not None and duration < stay_cfg.min_days:
             return False
         if start is not None:
             window_start = today or date.today()
             window_end = window_start + timedelta(days=stay_cfg.search_window_days)
             if not (window_start <= start <= window_end):
                 return False
-        # Prorate the monthly budget down for a stay under a month, since
-        # listing.price for a short sublet is the TOTAL for its stated
-        # period, not a monthly rate. Never prorate UP for a longer stay —
-        # normal monthly-rate listings are unaffected.
-        factor = min(duration / 30, 1.0)
-        if price_min is not None:
-            price_min = price_min * factor
-        if price_max is not None:
-            price_max = price_max * factor
+        if duration is not None:
+            # Prorate the monthly budget down for a stay under a month,
+            # since listing.price for a short sublet is the TOTAL for its
+            # stated period, not a monthly rate. Never prorate UP for a
+            # longer stay — normal monthly-rate listings are unaffected.
+            # Skipped entirely when duration is unknown — nothing to
+            # prorate against.
+            factor = min(duration / 30, 1.0)
+            if price_min is not None:
+                price_min = price_min * factor
+            if price_max is not None:
+                price_max = price_max * factor
 
     if price_max is not None and listing.price is not None and listing.price > price_max:
         return False
@@ -212,19 +213,17 @@ def explain_mismatch(
 
     if stay_cfg is not None:
         start, duration = _resolve_dates(listing, today=today)
-        if duration is None:
-            reasons.append("no lease start/end date or duration could be determined")
-        else:
-            if duration < stay_cfg.min_days:
-                reasons.append(f"stay is {duration} days, need at least {stay_cfg.min_days}")
-            if start is not None:
-                window_start = today or date.today()
-                window_end = window_start + timedelta(days=stay_cfg.search_window_days)
-                if not (window_start <= start <= window_end):
-                    reasons.append(
-                        f"lease starts {start.isoformat()}, outside the "
-                        f"{stay_cfg.search_window_days}-day search window"
-                    )
+        if duration is not None and duration < stay_cfg.min_days:
+            reasons.append(f"stay is {duration} days, need at least {stay_cfg.min_days}")
+        if start is not None:
+            window_start = today or date.today()
+            window_end = window_start + timedelta(days=stay_cfg.search_window_days)
+            if not (window_start <= start <= window_end):
+                reasons.append(
+                    f"lease starts {start.isoformat()}, outside the "
+                    f"{stay_cfg.search_window_days}-day search window"
+                )
+        if duration is not None:
             factor = min(duration / 30, 1.0)
             if price_min is not None:
                 price_min = price_min * factor

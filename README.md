@@ -161,17 +161,16 @@ stay:
   search_window_days: 21      # only listings starting today..+21 days
 ```
 
-**A listing needs *some* date/duration info to be considered at all — a
-deliberate exception to this tool's usual rule that missing data passes a
-filter.** Every other field (price, rooms, …) shows up as a
-match when unknown; a post that says nothing about when it starts or how
-long it runs is dropped outright, since there's nothing to check the
-minimum-stay and search-window rules against. This is enforced in
-`src/listing_filters.matches()`, clearly marked as the one hard gate in an
-otherwise soft-filter function. A post stating only a duration ("שבועיים",
-no specific start date) still passes the window check — you said dates
-"could be... a period of time," so a bare duration is enough to clear the
-hard gate, it just can't be checked against the *window* specifically.
+**Dates are soft-optional, like every other field here** — a post that
+says nothing about when it starts or how long it runs still passes,
+rather than being dropped outright. Whenever a piece of date info IS
+known, though, it's still checked: a stay shorter than `min_days` is
+rejected, and a known start date outside the `search_window_days` window
+is rejected — just not the *absence* of that info on its own. A post
+stating only a duration ("שבועיים", no specific start date) is checked
+against `min_days` but not the window (nothing to check a window against
+without a start date); a post with a start date but no stated
+duration/end is checked against the window but not `min_days`.
 
 **Price proration**: your `price_min`/`price_max` are a monthly budget.
 When a listing's stay is under 30 days, that budget is prorated down
@@ -426,12 +425,11 @@ Nominatim, or Google Sheets calls, and they never touch `data/listings.db`
   available. It will miss some genuine listings and occasionally flag a
   false positive; the address/phone/`available_rooms`/date fields it
   recovers in particular are best-effort (each only catches a handful of
-  common Hebrew phrasings). Since dates are now a *hard* requirement (see
-  "Stay length and dates" above), this fallback path will drop more
-  genuine listings than the LLM path would, on posts phrasing their dates
-  in ways its regexes don't cover. Tune a profile's `excluded_keywords` to
-  cut down on noise, or set `GEMINI_API_KEY` for meaningfully better
-  extraction across the board.
+  common Hebrew phrasings), so it will miss more of the `min_days`/
+  `search_window_days` checks in "Stay length and dates" above than the
+  LLM path would on posts phrasing their dates in ways its regexes don't
+  cover. Tune a profile's `excluded_keywords` to cut down on noise, or set
+  `GEMINI_API_KEY` for meaningfully better extraction across the board.
 - **Broker/agency posts are filtered out automatically** — any mention of
   "תיווך"/"מתווך" drops a post, unless it's negated ("ללא תיווך"/"בלי
   תיווך"/"אין תיווך", i.e. "no broker fee") which is the opposite signal, a

@@ -313,8 +313,7 @@ def test_resolve_dates_none_without_any_date_info():
 def test_resolve_dates_from_end_date_only_assumes_starting_today():
     # A post that only says when the lease ends most naturally reads as
     # "available now, until <end>" — it should not be treated as having no
-    # date info at all (that would drop it under the hard gate even though
-    # it did state something).
+    # date info at all, even though it did state something.
     listing = make_listing(lease_end_date=TODAY + timedelta(days=14))
     start, duration = _resolve_dates(listing, today=TODAY)
     assert start == TODAY
@@ -333,6 +332,21 @@ def test_stay_gate_matches_an_end_date_only_listing_within_the_minimum():
     assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is True
 
 
+def test_stay_gate_matches_a_start_date_within_window_with_no_known_duration():
+    # A start date with no end/duration info at all: duration stays
+    # unknown (soft-optional, so not itself a rejection reason), but the
+    # search-window check still applies to the start date we DO have.
+    listing = make_listing(lease_start_date=TODAY + timedelta(days=5))
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is True
+
+
+def test_stay_gate_still_drops_a_start_date_outside_window_with_no_known_duration():
+    listing = make_listing(lease_start_date=TODAY + timedelta(days=30))
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is False
+
+
 def test_stay_gate_is_skipped_when_no_stay_config_given():
     # Existing behavior (no stay_cfg) must be completely unaffected — a
     # listing with no date info at all still matches, as it always has.
@@ -341,11 +355,15 @@ def test_stay_gate_is_skipped_when_no_stay_config_given():
     assert matches(listing, cfg) is True
 
 
-def test_stay_gate_drops_a_listing_with_no_date_info():
+def test_stay_gate_passes_a_listing_with_no_date_info():
+    # Dates are soft-optional, like every other field here — a listing
+    # with no date/duration info at all still matches (no longer a hard
+    # gate; see README "Stay length and dates"). Only a stay SHORTER than
+    # the minimum, or a start date outside the window, is rejected.
     listing = make_listing()
     cfg = SearchConfig()
     stay = StayConfig(min_days=14, search_window_days=21)
-    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is False
+    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is True
 
 
 def test_stay_gate_drops_a_stay_shorter_than_minimum():
@@ -432,11 +450,13 @@ def test_explain_mismatch_empty_when_it_matches():
     assert explain_mismatch(listing, cfg) == []
 
 
-def test_explain_mismatch_no_date_info():
+def test_explain_mismatch_no_date_info_is_not_a_rejection_reason():
+    # Dates are soft-optional — no date/duration info at all is no longer
+    # a rejection reason on its own (see the matching matches() change).
     listing = make_listing()
     stay = StayConfig(min_days=14, search_window_days=21)
     reasons = explain_mismatch(listing, SearchConfig(), stay_cfg=stay, today=TODAY)
-    assert any("date" in r or "duration" in r for r in reasons)
+    assert reasons == []
 
 
 def test_explain_mismatch_stay_too_short():

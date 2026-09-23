@@ -95,7 +95,11 @@ searches:
       - "kerem hateimanim"
       - "kerem ha teimanim"
       - "הבימה"
+      - "כיכר הבימה"
       - "habima"
+      - "habima square"
+      - "הצפון הישן"
+      - "old north"
     # Posts containing any of these are dropped even if they mention sublets
     # (useful for filtering out false positives the keyword heuristic misses).
     excluded_keywords: []
@@ -118,6 +122,10 @@ searches:
       - "kerem hateimanim"
       - "kerem ha teimanim"
       - "הבימה"
+      - "כיכר הבימה"
       - "habima"
+      - "habima square"
+      - "הצפון הישן"
+      - "old north"
     excluded_keywords: []
     max_roommates: 4
