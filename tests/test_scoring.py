@@ -134,3 +134,26 @@ def test_stars_thresholds():
 def test_top_factors_returns_highest_first():
     parts = [("a", 5), ("b", 25), ("c", 10)]
     assert top_factors(parts, n=2) == [("b", 25), ("c", 10)]
+
+
+def test_price_scoring_is_prorated_consistently_with_the_filter():
+    # A 15-day listing at 1800 ILS sits at the very TOP of the prorated
+    # budget (2700-3600 prorated to 15/30 = 1350-1800) — matches.py accepts
+    # it, but only just. Scoring must see the same prorated range, not the
+    # raw monthly one, or a listing barely affordable for its actual
+    # duration would score as if it were the cheapest option available.
+    search = SearchConfig(price_min=2700, price_max=3600)
+    listing = make_listing(price=1800, lease_duration_days=15)
+    pts = factor(breakdown(listing, search), "1800 ILS")
+    assert pts <= 10  # near the expensive end of the prorated range, not 25
+
+    cheap = make_listing(price=1350, lease_duration_days=15)  # at prorated min
+    cheap_pts = factor(breakdown(cheap, search), "1350 ILS")
+    assert cheap_pts == 25
+
+
+def test_price_scoring_is_not_prorated_for_a_month_long_stay():
+    search = SearchConfig(price_min=2700, price_max=3600)
+    listing = make_listing(price=2700, lease_duration_days=45)  # factor capped at 1.0
+    pts = factor(breakdown(listing, search), "2700 ILS")
+    assert pts == 25  # at the raw (unprorated) minimum, same as no duration at all

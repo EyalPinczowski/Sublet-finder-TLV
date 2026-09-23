@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS listings (
     roommates INTEGER,
     toilets INTEGER,
     available_rooms INTEGER,
+    lease_start_date TEXT,
+    lease_end_date TEXT,
+    lease_duration_days INTEGER,
     address TEXT,
     phone TEXT,
     images TEXT,  -- JSON-encoded list of URLs
@@ -75,6 +78,9 @@ class ListingRow:
     roommates: int | None
     toilets: int | None
     available_rooms: int | None
+    lease_start_date: str | None
+    lease_end_date: str | None
+    lease_duration_days: int | None
     address: str | None
     phone: str | None
     images: str | None
@@ -145,9 +151,10 @@ def insert_listing(conn, listing, matched_profiles: list[str]) -> int | None:
     cur = conn.execute(
         "INSERT OR IGNORE INTO listings "
         "(post_url, group_name, raw_text, price, rooms, neighborhoods, "
-        " roommates, toilets, available_rooms, address, phone, images, summary, lat, lon, "
+        " roommates, toilets, available_rooms, lease_start_date, lease_end_date, "
+        " lease_duration_days, address, phone, images, summary, lat, lon, "
         " distance_m, score, content_hash, matched, matched_profiles) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             listing.post_url,
             listing.group_name,
@@ -158,6 +165,9 @@ def insert_listing(conn, listing, matched_profiles: list[str]) -> int | None:
             listing.roommates,
             listing.toilets,
             listing.available_rooms,
+            listing.lease_start_date.isoformat() if listing.lease_start_date else None,
+            listing.lease_end_date.isoformat() if listing.lease_end_date else None,
+            listing.lease_duration_days,
             listing.address,
             listing.phone,
             json.dumps(listing.images or []),

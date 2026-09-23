@@ -110,3 +110,29 @@ def test_image_urls_round_trip_through_json(isolated_db):
         store.insert_listing(conn, listing, matched_profiles=["default"])
         row = store.list_listings(conn, matched_only=True)[0]
         assert row.image_urls() == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+
+
+def test_lease_dates_are_persisted(isolated_db):
+    from datetime import date
+
+    listing = make_listing(
+        lease_start_date=date(2026, 11, 1),
+        lease_end_date=date(2026, 11, 20),
+        lease_duration_days=19,
+    )
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        row = store.list_listings(conn, matched_only=True)[0]
+    assert row.lease_start_date == "2026-11-01"
+    assert row.lease_end_date == "2026-11-20"
+    assert row.lease_duration_days == 19
+
+
+def test_lease_dates_are_null_when_unknown(isolated_db):
+    listing = make_listing()
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        row = store.list_listings(conn, matched_only=True)[0]
+    assert row.lease_start_date is None
+    assert row.lease_end_date is None
+    assert row.lease_duration_days is None

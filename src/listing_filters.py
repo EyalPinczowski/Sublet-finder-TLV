@@ -7,16 +7,28 @@ from .listing_models import Listing
 from .zones import within_zone
 
 
-def _resolve_dates(listing: Listing) -> tuple[date | None, int | None]:
+def _resolve_dates(
+    listing: Listing, today: date | None = None
+) -> tuple[date | None, int | None]:
     """(start_date, duration_days) reconciled from whatever combination of
     lease_start_date/lease_end_date/lease_duration_days was actually
-    extracted (a date range, a start date + stated duration, or a bare
-    duration) — the single place this logic lives, so the LLM and regex
-    extraction paths and this filter never disagree on it."""
+    extracted (a date range, a start date + stated duration, a bare
+    duration, or a bare end date) — the single place this logic lives, so
+    the LLM and regex extraction paths, this filter, and scoring.py never
+    disagree on it."""
     start = listing.lease_start_date
+    end = listing.lease_end_date
     duration = listing.lease_duration_days
-    if duration is None and start is not None and listing.lease_end_date is not None:
-        duration = (listing.lease_end_date - start).days
+    if duration is None and start is not None and end is not None:
+        duration = (end - start).days
+    elif duration is None and start is None and end is not None:
+        # An end date with no stated start most naturally reads as
+        # "available now, until <end>" — assume today, rather than
+        # treating the post as having no date info at all.
+        start = today or date.today()
+        duration = (end - start).days
+    if duration is not None and duration <= 0:
+        return start, None  # an end date already in the past isn't usable
     return start, duration
 
 
@@ -30,7 +42,7 @@ def matches(
     price_min, price_max = search_cfg.price_min, search_cfg.price_max
 
     if stay_cfg is not None:
-        start, duration = _resolve_dates(listing)
+        start, duration = _resolve_dates(listing, today=today)
         # HARD gate — unlike every other field in this function, dates are
         # REQUIRED, not soft-optional: a listing with no date/duration info
         # at all is dropped rather than shown as a maybe. Deliberate

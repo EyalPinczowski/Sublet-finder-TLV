@@ -220,6 +220,29 @@ def test_resolve_dates_none_without_any_date_info():
     assert _resolve_dates(listing) == (None, None)
 
 
+def test_resolve_dates_from_end_date_only_assumes_starting_today():
+    # A post that only says when the lease ends most naturally reads as
+    # "available now, until <end>" — it should not be treated as having no
+    # date info at all (that would drop it under the hard gate even though
+    # it did state something).
+    listing = make_listing(lease_end_date=TODAY + timedelta(days=14))
+    start, duration = _resolve_dates(listing, today=TODAY)
+    assert start == TODAY
+    assert duration == 14
+
+
+def test_resolve_dates_end_date_already_past_is_unusable():
+    listing = make_listing(lease_end_date=TODAY - timedelta(days=1))
+    start, duration = _resolve_dates(listing, today=TODAY)
+    assert duration is None
+
+
+def test_stay_gate_matches_an_end_date_only_listing_within_the_minimum():
+    listing = make_listing(lease_end_date=TODAY + timedelta(days=14))
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is True
+
+
 def test_stay_gate_is_skipped_when_no_stay_config_given():
     # Existing behavior (no stay_cfg) must be completely unaffected — a
     # listing with no date info at all still matches, as it always has.

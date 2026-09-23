@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .config import SearchConfig, ZoneConfig
+from .listing_filters import _resolve_dates
 from .listing_models import Listing
 
 
@@ -34,10 +35,19 @@ def _zone_points(listing: Listing, zone_cfg: Optional[ZoneConfig]) -> tuple[str,
     return "location unknown", 12
 
 
-def _price_points(price: Optional[int], search_cfg: SearchConfig) -> tuple[str, int]:
+def _price_points(
+    price: Optional[int], search_cfg: SearchConfig, duration_days: Optional[int] = None
+) -> tuple[str, int]:
     if price is None:
         return "price not listed", 12
     lo, hi = search_cfg.price_min, search_cfg.price_max
+    if duration_days is not None:
+        # Mirror listing_filters.matches()'s proration exactly, so a
+        # listing's score is never computed against a different budget
+        # than the one that decided whether it matched at all.
+        factor = min(duration_days / 30, 1.0)
+        lo = lo * factor if lo is not None else None
+        hi = hi * factor if hi is not None else None
     if lo is not None and price <= lo:
         return f"{price} ILS (at/below target)", 25
     if lo is not None and hi is not None and hi > lo:
@@ -106,9 +116,10 @@ def breakdown(
 ) -> list[tuple[str, int]]:
     """The score's per-factor contributions as [(label, delta), ...], in the
     order they're applied — the single source of truth `score()` sums."""
+    _, duration_days = _resolve_dates(listing)
     parts = [
         _zone_points(listing, zone_cfg),
-        _price_points(listing.price, search_cfg),
+        _price_points(listing.price, search_cfg, duration_days),
         _rooms_points(listing.rooms, search_cfg),
         _roommates_points(listing.roommates, search_cfg),
         _bathroom_points(listing, search_cfg),
