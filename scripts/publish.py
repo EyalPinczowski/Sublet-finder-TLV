@@ -37,11 +37,21 @@ def _card(conn, row) -> str:
         else ""
     )
     profiles = ", ".join(row.profile_names()) or "?"
+    stay = " &middot; ".join(
+        part
+        for part in [
+            row.lease_start_date and f"from {row.lease_start_date}",
+            row.lease_duration_days and f"{row.lease_duration_days} days",
+        ]
+        if part
+    )
+    stay_html = f'<p class="stay">{html.escape(stay)}</p>' if stay else ""
     return (
         f'<div class="card">{img_html}'
         f"<h3>{f'{row.price} ILS' if row.price is not None else 'Price not listed'} "
         f"&middot; {row.rooms or '?'} rooms &middot; score {score}</h3>"
         f'<p class="matched">Matched: {html.escape(profiles)}</p>'
+        f"{stay_html}"
         f'<p class="addr">{html.escape(row.address or row.neighborhoods or "area unknown")}</p>'
         f"<p>{html.escape(row.summary or row.raw_text[:200])}</p>"
         f"<p>{html.escape(row.phone or '')}</p>"

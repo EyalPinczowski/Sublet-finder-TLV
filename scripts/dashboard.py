@@ -53,11 +53,21 @@ def _card(conn, row, token: str) -> str:
     post_q = quote(row.post_url, safe="")
     profiles = ", ".join(row.profile_names()) or "?"
     price = f"{row.price} ILS" if row.price is not None else "Price not listed"
+    stay = " &middot; ".join(
+        part
+        for part in [
+            row.lease_start_date and f"from {row.lease_start_date}",
+            row.lease_duration_days and f"{row.lease_duration_days} days",
+        ]
+        if part
+    )
+    stay_html = f'<p class="stay">{html.escape(stay)}</p>' if stay else ""
     return f"""
     <div class="card">
       {img_html}
       <h3>{price} &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>
       <p class="matched">Matched: {html.escape(profiles)}</p>
+      {stay_html}
       <p class="addr">{html.escape(row.address or row.neighborhoods or 'area unknown')}</p>
       <p>{html.escape(row.summary or row.raw_text[:200])}</p>
       <p>{html.escape(row.phone or '')}</p>

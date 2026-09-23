@@ -32,6 +32,25 @@ def test_render_page_includes_listing_fields(isolated_db):
     assert "tok" in page  # vote links carry the token
 
 
+def test_render_page_shows_lease_dates(isolated_db):
+    from datetime import date
+
+    listing = Listing(
+        post_url="https://facebook.com/groups/1/posts/2",
+        group_name="Secret Tel Aviv",
+        raw_text="raw text",
+        price=3300,
+        lease_start_date=date(2026, 11, 1),
+        lease_duration_days=14,
+        score=80,
+    )
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    assert "2026-11-01" in page
+    assert "14 days" in page
+
+
 def test_render_page_excludes_dismissed_listings(isolated_db):
     with store.connect() as conn:
         listing = _seed(conn)

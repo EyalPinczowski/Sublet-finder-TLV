@@ -173,11 +173,22 @@ def cmd_matches(_args) -> None:
         for listing in listings:
             score = store.effective_score(conn, listing)
             profiles = ", ".join(listing.profile_names()) or "?"
+            price = f"{listing.price} ILS" if listing.price is not None else "Price not listed"
             body_lines = [
-                f"[bold]{listing.price or '?'} ILS[/] · "
+                f"[bold]{price}[/] · "
                 f"{listing.rooms or '?'} rooms · score {score} · matched: {profiles}",
                 listing.address or listing.neighborhoods or "area unknown",
             ]
+            if listing.lease_start_date or listing.lease_duration_days:
+                stay = " · ".join(
+                    part
+                    for part in [
+                        listing.lease_start_date and f"from {listing.lease_start_date}",
+                        listing.lease_duration_days and f"{listing.lease_duration_days} days",
+                    ]
+                    if part
+                )
+                body_lines.append(stay)
             if listing.phone:
                 body_lines.append(listing.phone)
             body_lines.append(listing.post_url)

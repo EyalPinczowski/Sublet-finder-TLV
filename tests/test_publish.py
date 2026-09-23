@@ -29,6 +29,25 @@ def test_render_snapshot_includes_listing_fields(isolated_db):
     assert listing.post_url in snapshot
 
 
+def test_render_snapshot_shows_lease_dates(isolated_db):
+    from datetime import date
+
+    listing = Listing(
+        post_url="https://facebook.com/groups/1/posts/2",
+        group_name="Secret Tel Aviv",
+        raw_text="raw text",
+        price=3300,
+        lease_start_date=date(2026, 11, 1),
+        lease_duration_days=14,
+        score=80,
+    )
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        snapshot = publish.render_snapshot(conn)
+    assert "2026-11-01" in snapshot
+    assert "14 days" in snapshot
+
+
 def test_render_snapshot_is_noindex(isolated_db):
     with store.connect() as conn:
         snapshot = publish.render_snapshot(conn)
