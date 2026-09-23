@@ -87,10 +87,10 @@ def test_roommates_fewer_scores_higher():
 
 
 def test_bathrooms_are_not_a_scoring_factor():
-    """Bathroom count is a filter concern (listing_filters._bathrooms_ok),
-    not a ranking one — two listings differing only in toilets should
-    score identically, and no factor label should mention bathrooms."""
-    search = SearchConfig(min_bathrooms=2)
+    """Bathroom count is neither a match filter nor a ranking factor — two
+    listings differing only in toilets should score identically, and no
+    factor label should mention bathrooms."""
+    search = SearchConfig()
     plenty = make_listing(toilets=3)
     few = make_listing(toilets=1, separate_toilet_shower=False)
     assert score(plenty, search) == score(few, search)

@@ -201,40 +201,13 @@ def test_missing_roommates_is_not_filtered_out():
     assert matches(listing, cfg) is True
 
 
-def test_bathroom_rule_passes_with_enough_toilets():
-    listing = make_listing(toilets=2, roommates=3)
-    cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
-    assert matches(listing, cfg) is True
-
-
-def test_bathroom_rule_passes_with_toilet_per_roommate():
-    listing = make_listing(toilets=1, roommates=1)
-    cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
-    assert matches(listing, cfg) is True
-
-
-def test_bathroom_rule_fails_when_short_on_toilets():
-    listing = make_listing(toilets=1, roommates=2, separate_toilet_shower=False)
-    cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
-    assert matches(listing, cfg) is False
-
-
-def test_bathroom_rule_passes_with_separate_toilet_shower_under_cap():
-    listing = make_listing(toilets=1, roommates=3, separate_toilet_shower=True)
-    cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
-    assert matches(listing, cfg) is True
-
-
-def test_bathroom_rule_rejects_separate_toilet_shower_over_cap():
-    listing = make_listing(toilets=1, roommates=4, separate_toilet_shower=True)
-    cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
-    assert matches(listing, cfg) is False
-
-
-def test_bathroom_rule_passes_through_with_no_info():
-    listing = make_listing(toilets=None, roommates=None, separate_toilet_shower=False)
-    cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
-    assert matches(listing, cfg) is True
+def test_bathrooms_are_not_a_match_filter():
+    """Bathroom count is extracted and still shown in Telegram alerts, but
+    is not a criterion in either scoring (see test_scoring.py) or matching
+    — a listing with very few toilets for its roommate count must still
+    match, same as one with plenty."""
+    listing = make_listing(toilets=1, roommates=4, separate_toilet_shower=False)
+    assert matches(listing, SearchConfig()) is True
 
 
 def test_zone_match_rescues_a_neighborhood_keyword_miss():
@@ -539,13 +512,6 @@ def test_explain_mismatch_too_many_roommates():
     cfg = SearchConfig(max_roommates=3)
     reasons = explain_mismatch(listing, cfg)
     assert any("roommates, max is" in r for r in reasons)
-
-
-def test_explain_mismatch_bathroom_rule():
-    listing = make_listing(toilets=1, roommates=2, separate_toilet_shower=False)
-    cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
-    reasons = explain_mismatch(listing, cfg)
-    assert any("bathrooms don't meet the rule" in r for r in reasons)
 
 
 def test_explain_mismatch_neighborhood_miss():

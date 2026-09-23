@@ -2,10 +2,9 @@
 first instead of an unranked list. Adapted from bgu-housing-bot's fit.py,
 but built from scratch around what this tool actually extracts — no
 floor/elevator/furnished/balcony/broker factors, since nothing here parses
-those. Bathroom count is deliberately excluded too, despite being parsed
-(`Listing.toilets`) and shown in alerts — it's a fine "does this even
-qualify" filter (see `listing_filters._bathrooms_ok`) but too noisy a
-signal to rank listings against each other by.
+those. Bathroom count is deliberately excluded too — it's parsed
+(`Listing.toilets`) and still shown in alerts, but is neither a match
+filter nor a ranking factor; too noisy a signal either way.
 
 Each factor contributes an independent, capped delta; unknown data gets a
 neutral (not zero, not full) fill so a listing missing one field is never

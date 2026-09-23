@@ -62,8 +62,8 @@ playwright install chromium
 ```
 
 Edit `config.yaml` with the groups you're a member of, your own search
-profile(s) (price range, neighborhoods, room/roommate/bathroom requirements
-— see [Multiple search profiles](#multiple-search-profiles)), and the
+profile(s) (price range, neighborhoods, room/roommate requirements — see
+[Multiple search profiles](#multiple-search-profiles)), and the
 `llm:`/`zone:` blocks described below.
 
 Copy `.env.example` to `.env` and fill in whichever of the following you
@@ -120,8 +120,8 @@ searches:
     max_available_rooms: 1
     price_min: 2700
     price_max: 3600
-    # ... neighborhoods, max_roommates, min_bathrooms, etc. — same fields
-    # as before, just nested under a named profile now.
+    # ... neighborhoods, max_roommates, etc. — same fields as before, just
+    # nested under a named profile now.
   - name: "two rooms (with a friend)"
     emoji: "🔵"
     min_available_rooms: 2
@@ -163,7 +163,7 @@ stay:
 
 **A listing needs *some* date/duration info to be considered at all — a
 deliberate exception to this tool's usual rule that missing data passes a
-filter.** Every other field (price, rooms, bathrooms, …) shows up as a
+filter.** Every other field (price, rooms, …) shows up as a
 match when unknown; a post that says nothing about when it starts or how
 long it runs is dropped outright, since there's nothing to check the
 minimum-stay and search-window rules against. This is enforced in
@@ -293,8 +293,8 @@ prints the specific reason(s) it was rejected (price out of range, stay too
 short, wrong neighborhood, broker/girls-only mention, etc.) instead of just
 silently skipping it. Run it once if match counts look suspiciously low —
 either it'll turn up a real bug, or it'll confirm your `config.yaml` criteria
-(price range, neighborhoods, `min_bathrooms`, the lease-dates requirement)
-are just genuinely strict for what's actually being posted right now.
+(price range, neighborhoods, the lease-dates requirement) are just
+genuinely strict for what's actually being posted right now.
 
 Re-run the login script whenever the session expires (Facebook logs you out
 after a while of inactivity, or if it flags the login as suspicious). A scan

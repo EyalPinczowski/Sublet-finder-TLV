@@ -35,8 +35,6 @@ class SearchConfig:
     neighborhoods: list[str] = field(default_factory=list)
     excluded_keywords: list[str] = field(default_factory=list)
     max_roommates: int | None = None
-    min_bathrooms: int | None = None
-    separate_toilet_shower_max_roommates: int | None = None
     # How many rooms/spots the POST must be offering right now — distinct
     # from min_rooms (the apartment's total size). None = no constraint.
     min_available_rooms: int | None = None
@@ -139,8 +137,6 @@ def _search_profile(raw: dict, default_name: str = "default") -> SearchConfig:
         neighborhoods=raw.get("neighborhoods") or [],
         excluded_keywords=raw.get("excluded_keywords") or [],
         max_roommates=raw.get("max_roommates"),
-        min_bathrooms=raw.get("min_bathrooms"),
-        separate_toilet_shower_max_roommates=raw.get("separate_toilet_shower_max_roommates"),
         min_available_rooms=raw.get("min_available_rooms"),
         max_available_rooms=raw.get("max_available_rooms"),
     )

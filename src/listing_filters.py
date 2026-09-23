@@ -188,9 +188,6 @@ def matches_without_location(
     ):
         return False
 
-    if not _bathrooms_ok(listing, search_cfg):
-        return False
-
     return True
 
 
@@ -285,12 +282,6 @@ def explain_mismatch(
     ):
         reasons.append(f"{listing.roommates} roommates, max is {search_cfg.max_roommates}")
 
-    if not _bathrooms_ok(listing, search_cfg):
-        toilets = listing.toilets if listing.toilets is not None else "?"
-        reasons.append(
-            f"bathrooms don't meet the rule (has {toilets}, need {search_cfg.min_bathrooms})"
-        )
-
     if search_cfg.neighborhoods and not location_ok(listing, search_cfg, zone_cfg):
         reasons.append(
             "neighborhood not in profile's list and outside the zone radius"
@@ -318,42 +309,3 @@ def location_ok(listing: Listing, search_cfg: SearchConfig, zone_cfg: ZoneConfig
     # so a missing/failed geocode never regresses the existing
     # keyword-only behavior.
     return bool(profile_hit or (zone_cfg and within_zone(listing.distance_m, zone_cfg)))
-
-
-def _bathrooms_ok(listing: Listing, search_cfg: SearchConfig) -> bool:
-    """The bathroom rule is satisfied if ANY of: the apartment has at least
-    min_bathrooms toilets, there's a toilet per roommate, or the toilet and
-    shower are separate rooms and roommates <=
-    separate_toilet_shower_max_roommates. Not enough info to judge -> pass
-    through, same as the other soft filters above."""
-    if not (search_cfg.min_bathrooms or search_cfg.separate_toilet_shower_max_roommates):
-        return True
-
-    if listing.toilets is None and not listing.separate_toilet_shower:
-        return True
-
-    if (
-        search_cfg.min_bathrooms is not None
-        and listing.toilets is not None
-        and listing.toilets >= search_cfg.min_bathrooms
-    ):
-        return True
-
-    if (
-        listing.toilets is not None
-        and listing.roommates is not None
-        and listing.toilets >= listing.roommates
-    ):
-        return True
-
-    if (
-        listing.separate_toilet_shower
-        and search_cfg.separate_toilet_shower_max_roommates is not None
-        and (
-            listing.roommates is None
-            or listing.roommates <= search_cfg.separate_toilet_shower_max_roommates
-        )
-    ):
-        return True
-
-    return False

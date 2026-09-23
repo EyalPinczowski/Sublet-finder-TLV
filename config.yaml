@@ -101,13 +101,6 @@ searches:
     excluded_keywords: []
     # Total roommates in the apartment (including you), max allowed.
     max_roommates: 3
-    # Bathroom rule — a listing passes if ANY of these hold:
-    #   - the apartment has at least min_bathrooms toilets
-    #   - there's a toilet per roommate
-    #   - the toilet and shower are separate rooms, and roommates <=
-    #     separate_toilet_shower_max_roommates
-    min_bathrooms: 2
-    separate_toilet_shower_max_roommates: 3
 
   - name: "two rooms (with a friend)"
     emoji: "\U0001F535"  # blue
@@ -128,5 +121,3 @@ searches:
       - "habima"
     excluded_keywords: []
     max_roommates: 4
-    min_bathrooms: 2
-    separate_toilet_shower_max_roommates: 4
