@@ -244,28 +244,35 @@ optimization can pause Termux in the background regardless — set it to
 "Unrestricted" for reliable scheduled runs.
 
 **Exit codes**, so a cron log (or `echo $?`) tells you what happened
-without reading the full output: `0` = ran cleanly, `2` = Facebook showed a
-checkpoint/login wall mid-scan (your saved session likely expired — a
-debug screenshot is saved to `data/checkpoint_<group name>.png`, and
-`python -m src.cli login` or the headless-login trick needs to be redone),
-any other non-zero code = a genuine bug, not a session problem.
+without reading the full output: `0` = ran cleanly, `2` = either Facebook
+showed a checkpoint/login wall mid-scan (your saved session likely
+expired — a debug screenshot is saved to
+`data/checkpoint_<group name>.png`, and `python -m src.cli login` or the
+headless-login trick needs to be redone), or 2+ groups in the same run
+loaded normally but returned zero posts (a Facebook soft-block can serve a
+working-looking page with no login wall at all — see the heartbeat message
+below to tell the two apart), any other non-zero code = a genuine bug, not
+a session problem.
 
 **Telegram heartbeat**: if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are
 configured, every scan (outside of `--dry-run`) ends with a short Telegram
 message — ✅ success with the new-match count, 🔴 blocked (session likely
-expired), or 🔴 crashed — so an unattended cron run's outcome shows up on
-the channel you're already watching instead of only in `data/scan.log`.
-It also doubles as a check that cron itself ran at all: if the expected
-message doesn't show up by ~9am/9pm, that silence is the signal.
+expired), 🔴 possible soft-block (multiple groups returned zero posts
+despite loading normally), or 🔴 crashed — so an unattended cron run's
+outcome shows up on the channel you're already watching instead of only in
+`data/scan.log`. It also doubles as a check that cron itself ran at all:
+if the expected message doesn't show up by ~9am/9pm, that silence is the
+signal.
 
 ### Dead-link pruning
 
-Each scan revisits a capped batch (20) of your most-recently-matched
-listings and checks whether Facebook now shows a "content isn't available"
-placeholder for the post — meaning the apartment's likely been rented out
-or the post removed. A confirmed-dead listing is hidden from
-`matches.py`/the dashboard/the published snapshot the same way a manual
-🗑 Dismiss is, instead of sitting there indefinitely. This check is
+Once a day (not every scan — the check itself costs real time and traffic,
+so it's throttled), a scan revisits a capped batch (20) of your
+most-recently-matched listings and checks whether Facebook now shows a
+"content isn't available" placeholder for the post — meaning the apartment's
+likely been rented out or the post removed. A confirmed-dead listing is
+hidden from `matches.py`/the dashboard/the published snapshot the same way a
+manual 🗑 Dismiss is, instead of sitting there indefinitely. This check is
 best-effort and never fails or blocks a scan — a network hiccup or a
 markup change just means it's skipped for that run.
 

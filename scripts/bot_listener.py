@@ -61,29 +61,36 @@ def main() -> None:
     bot_token = config.telegram.bot_token
     offset = None
     print("Listening for Telegram button taps (Ctrl+C to stop)...")
-    while True:
-        try:
-            resp = requests.get(
-                f"https://api.telegram.org/bot{bot_token}/getUpdates",
-                params={"timeout": POLL_TIMEOUT_SEC, "offset": offset},
-                timeout=POLL_TIMEOUT_SEC + 10,
-            )
-            resp.raise_for_status()
-            updates = resp.json().get("result", [])
-        except Exception as exc:
-            print(f"[bot_listener] getUpdates failed: {exc}")
-            time.sleep(5)
-            continue
+    # One connection for the whole run, not one per poll cycle — store.
+    # connect() re-runs a schema/migration check on open, which is wasted
+    # work every ~30s for the lifetime of a long-running process. Each
+    # batch of updates still gets its own explicit commit below, so a vote
+    # tap is durable promptly rather than sitting in one long-lived
+    # transaction for as long as the process happens to stay up.
+    with store.connect() as conn:
+        while True:
+            try:
+                resp = requests.get(
+                    f"https://api.telegram.org/bot{bot_token}/getUpdates",
+                    params={"timeout": POLL_TIMEOUT_SEC, "offset": offset},
+                    timeout=POLL_TIMEOUT_SEC + 10,
+                )
+                resp.raise_for_status()
+                updates = resp.json().get("result", [])
+            except Exception as exc:
+                print(f"[bot_listener] getUpdates failed: {exc}")
+                time.sleep(5)
+                continue
 
-        if not updates:
-            continue
-        with store.connect() as conn:
+            if not updates:
+                continue
             for update in updates:
                 offset = update["update_id"] + 1
                 try:
                     _handle_update(conn, bot_token, update)
                 except Exception as exc:
                     print(f"[bot_listener] error handling update {update.get('update_id')}: {exc}")
+            conn.commit()
 
 
 if __name__ == "__main__":

@@ -37,10 +37,18 @@ def _price_cell(price: int | None) -> str | int:
 
 _sheet = None
 _checked = False
+# Loaded once per process (inside _get_sheet(), gated by _checked) rather
+# than re-fetched via sheet.col_values(1) on every save_listing() call — a
+# scan with N matched listings used to pay N full-column reads just to
+# check for a duplicate URL. Kept in sync in-memory as rows are appended.
+_existing_urls: set[str] | None = None
+# True once something's actually been appended since the last flush() —
+# lets flush() skip a wasted re-sort call when nothing changed this run.
+_dirty = False
 
 
 def _get_sheet():
-    global _sheet, _checked
+    global _sheet, _checked, _existing_urls
     if _checked:
         return _sheet
     _checked = True
@@ -66,6 +74,7 @@ def _get_sheet():
         has_content = any(any(cell.strip() for cell in row) for row in sheet.get_all_values())
         if not has_content:
             sheet.append_row(HEADER)
+        _existing_urls = set(sheet.col_values(1))
         _sheet = sheet
     except Exception as exc:
         print(f"[sheets] could not open the sheet: {exc}")
@@ -75,15 +84,18 @@ def _get_sheet():
 
 def save_listing(listing: Listing) -> None:
     """Append one row for a matched listing, skipping it if its post_url is
-    already in the sheet. No-op (and safe to call unconditionally) when the
-    sink isn't configured."""
+    already in the sheet (checked against an in-memory cache, not a fresh
+    API read — see _existing_urls). No-op (and safe to call
+    unconditionally) when the sink isn't configured. Does NOT re-sort the
+    sheet itself — call flush() once at the end of a scan for that,
+    instead of paying a full-range sort after every single listing."""
+    global _dirty
     sheet = _get_sheet()
     if sheet is None:
         return
+    if listing.post_url in _existing_urls:
+        return
     try:
-        existing_urls = sheet.col_values(1)
-        if listing.post_url in existing_urls:
-            return
         sheet.append_row(
             [
                 listing.post_url,
@@ -102,9 +114,20 @@ def save_listing(listing: Listing) -> None:
                 listing.summary,
             ]
         )
-        _resort(sheet)
+        _existing_urls.add(listing.post_url)
+        _dirty = True
     except Exception as exc:
         print(f"[sheets] could not save listing: {exc}")
+
+
+def flush() -> None:
+    """Re-sorts the sheet once, if anything was actually appended since
+    the last flush() — call once at the end of a scan (see cli._scan),
+    not after every save_listing() call."""
+    global _dirty
+    if _sheet is not None and _dirty:
+        _resort(_sheet)
+    _dirty = False
 
 
 def _resort(sheet) -> None:

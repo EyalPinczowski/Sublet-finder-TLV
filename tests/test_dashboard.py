@@ -1,3 +1,9 @@
+import threading
+import urllib.error
+import urllib.request
+from contextlib import contextmanager
+from http.server import HTTPServer
+
 import dashboard
 
 from src import store
@@ -136,6 +142,40 @@ def test_render_page_includes_google_maps_link_for_known_address(isolated_db):
     assert listing.post_url in page  # "View post" link still present too
 
 
+def test_render_page_outbound_card_links_never_leak_the_token_via_referer(isolated_db):
+    """Every outbound card link (post + Google Maps) must carry
+    rel="noreferrer" — the page's own URL carries ?token=<DASHBOARD_TOKEN>,
+    the dashboard's only auth mechanism, and a browser sends the current
+    page URL as Referer by default."""
+    with store.connect() as conn:
+        listing = Listing(
+            post_url="https://facebook.com/groups/1/posts/1",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=3300,
+            address="דיזנגוף 120",
+            score=80,
+        )
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    outbound_hrefs = [
+        line
+        for line in page.splitlines()
+        if 'target="_blank"' in line and ("facebook.com" in line or "google.com/maps" in line)
+    ]
+    assert outbound_hrefs  # sanity: the page actually has outbound links to check
+    assert all('rel="noreferrer"' in line for line in outbound_hrefs)
+
+
+def test_map_popup_links_also_carry_noreferrer():
+    """Same token-leak concern applies to the Leaflet popup links, which
+    are built in JS rather than embedded directly in the HTML."""
+    assert 'href="\' + m.post_url + \'" target="_blank" rel="noreferrer"' in (
+        dashboard._MAP_SCRIPT_TEMPLATE
+    )
+    assert 'rel="noreferrer">Google Maps</a>' in dashboard._MAP_SCRIPT_TEMPLATE
+
+
 def test_render_page_omits_google_maps_link_without_address_or_coordinates(isolated_db):
     with store.connect() as conn:
         listing = Listing(
@@ -182,3 +222,79 @@ def test_get_token_generates_and_persists_when_unset(monkeypatch, tmp_path):
     assert dashboard.TOKEN_PATH.read_text().strip() == token
     # A second call reuses the persisted token.
     assert dashboard._get_token() == token
+
+
+# --- _vote_form: renders a POST form, not a mutating GET link ---
+
+
+def test_vote_form_is_a_post_form_with_the_right_hidden_fields():
+    html_out = dashboard._vote_form("tok", "https://fb.com/1", "dismiss", "🗑 Dismiss")
+    assert '<form method="post" action="/vote"' in html_out
+    assert 'name="token" value="tok"' in html_out
+    assert 'name="action" value="dismiss"' in html_out
+    assert 'name="post" value="https://fb.com/1"' in html_out
+    assert 'href="/vote' not in html_out  # never a GET link
+
+
+# --- /vote: POST-only, so a leaked link can't be silently exploited ---
+
+
+@contextmanager
+def _running_dashboard(token: str):
+    server = HTTPServer(("127.0.0.1", 0), dashboard.make_handler(token))
+    port = server.server_address[1]
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.shutdown()
+        t.join(timeout=5)
+
+
+def test_vote_get_returns_405_and_does_not_mutate(isolated_db):
+    with store.connect() as conn:
+        listing = _seed(conn)
+    with _running_dashboard("tok") as base_url:
+        req = urllib.request.Request(
+            f"{base_url}/vote?token=tok&action=dismiss&post={listing.post_url}"
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raised = None
+        except urllib.error.HTTPError as exc:
+            raised = exc.code
+    assert raised == 405
+    with store.connect() as conn:
+        assert store.is_dismissed(conn, listing.post_url) is False
+
+
+def test_vote_post_with_correct_token_dismisses_the_listing(isolated_db):
+    with store.connect() as conn:
+        listing = _seed(conn)
+    with _running_dashboard("tok") as base_url:
+        body = f"token=tok&action=dismiss&post={listing.post_url}".encode()
+        req = urllib.request.Request(f"{base_url}/vote", data=body, method="POST")
+        resp = urllib.request.urlopen(req, timeout=5)
+        # urlopen follows the 302 automatically, landing back on the main
+        # page — the meaningful check is the DB mutation below.
+        assert resp.status == 200
+        assert "token=tok" in resp.geturl()
+    with store.connect() as conn:
+        assert store.is_dismissed(conn, listing.post_url) is True
+
+
+def test_vote_post_with_wrong_token_is_forbidden_and_does_not_mutate(isolated_db):
+    with store.connect() as conn:
+        listing = _seed(conn)
+    with _running_dashboard("tok") as base_url:
+        body = f"token=wrong&action=dismiss&post={listing.post_url}".encode()
+        req = urllib.request.Request(f"{base_url}/vote", data=body, method="POST")
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raised = None
+        except urllib.error.HTTPError as exc:
+            raised = exc.code
+    assert raised == 403
+    with store.connect() as conn:
+        assert store.is_dismissed(conn, listing.post_url) is False

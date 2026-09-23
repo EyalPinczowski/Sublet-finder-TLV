@@ -224,6 +224,75 @@ def test_post_timestamp_none_when_nothing_parseable():
     assert scraper._post_timestamp(article) is None
 
 
+def test_post_timestamp_skips_waiting_calls_when_locator_finds_nothing():
+    """count()==0 must return immediately rather than calling
+    get_attribute()/inner_text() and waiting out their timeout hoping a
+    matching element eventually appears."""
+    article = MagicMock()
+    time_loc = MagicMock()
+    time_loc.count.return_value = 0
+    article.locator.return_value = time_loc
+    assert scraper._post_timestamp(article) is None
+    time_loc.first.get_attribute.assert_not_called()
+
+
+# --- _extract_one_post: author/permalink locators are count()-checked ---
+
+
+def _make_article(text="post text", author_count=0, author_text="", permalink_count=0, href=""):
+    article = MagicMock()
+    article.inner_text.return_value = text
+    author_loc = MagicMock()
+    author_loc.count.return_value = author_count
+    author_loc.first.inner_text.return_value = author_text
+    permalink_loc = MagicMock()
+    permalink_loc.count.return_value = permalink_count
+    permalink_loc.first.get_attribute.return_value = href
+
+    def locator_side_effect(selector):
+        if selector == "h3 a, h2 a, strong a":
+            return author_loc
+        if selector == 'a[href*="/posts/"], a[href*="/permalink/"]':
+            return permalink_loc
+        return MagicMock(count=MagicMock(return_value=0))
+
+    article.locator.side_effect = locator_side_effect
+    return article, author_loc, permalink_loc
+
+
+def test_extract_one_post_uses_author_and_permalink_when_present(monkeypatch):
+    monkeypatch.setattr(scraper, "_post_timestamp", lambda article: None)
+    monkeypatch.setattr(scraper, "_images", lambda article: [])
+    article, _, _ = _make_article(
+        text="סאבלט בפלורנטין",
+        author_count=1,
+        author_text="Dana",
+        permalink_count=1,
+        href="https://fb.com/groups/1/posts/1",
+    )
+    post = scraper._extract_one_post(article)
+    assert post.author == "Dana"
+    assert post.post_url == "https://fb.com/groups/1/posts/1"
+
+
+def test_extract_one_post_falls_back_to_text_sig_without_a_permalink(monkeypatch):
+    monkeypatch.setattr(scraper, "_post_timestamp", lambda article: None)
+    monkeypatch.setattr(scraper, "_images", lambda article: [])
+    article, _, _ = _make_article(text="סאבלט בפלורנטין", author_count=0, permalink_count=0)
+    post = scraper._extract_one_post(article)
+    assert post.post_url.startswith("text:")
+    assert post.author == ""
+
+
+def test_extract_one_post_skips_waiting_calls_when_neither_locator_matches(monkeypatch):
+    monkeypatch.setattr(scraper, "_post_timestamp", lambda article: None)
+    monkeypatch.setattr(scraper, "_images", lambda article: [])
+    article, author_loc, permalink_loc = _make_article(text="t", author_count=0, permalink_count=0)
+    scraper._extract_one_post(article)
+    author_loc.first.inner_text.assert_not_called()
+    permalink_loc.first.get_attribute.assert_not_called()
+
+
 # --- _force_chronological_sort ---
 
 
@@ -267,8 +336,11 @@ def test_scroll_and_extract_stops_at_limit(monkeypatch):
         scraper.RawPost(post_url=f"https://fb.com/{i}", author="a", text="t") for i in range(10)
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, "g1", limit=5, cutoff=None, max_scrolls=15)
+    result, saw_any_article = scraper._scroll_and_extract(
+        page, "g1", limit=5, cutoff=None, max_scrolls=15
+    )
     assert len(result) == 5
+    assert saw_any_article is True
 
 
 def test_scroll_and_extract_stops_on_consecutive_old_posts(monkeypatch):
@@ -289,7 +361,7 @@ def test_scroll_and_extract_stops_on_consecutive_old_posts(monkeypatch):
         ]
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=cutoff, max_scrolls=15)
+    result, _ = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=cutoff, max_scrolls=15)
     assert [p.post_url for p in result] == [
         "https://fb.com/1",
         "https://fb.com/2",
@@ -315,7 +387,7 @@ def test_scroll_and_extract_resets_consecutive_old_counter_on_a_new_post(monkeyp
         ]
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=cutoff, max_scrolls=15)
+    result, _ = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=cutoff, max_scrolls=15)
     assert len(result) == 6  # the post at #3 reset the counter, so #4-6 are needed to stop
 
 
@@ -328,7 +400,7 @@ def test_scroll_and_extract_unknown_age_never_triggers_stop(monkeypatch):
         for i in range(10)
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, "g1", limit=10, cutoff=cutoff, max_scrolls=15)
+    result, _ = scraper._scroll_and_extract(page, "g1", limit=10, cutoff=cutoff, max_scrolls=15)
     assert len(result) == 10
 
 
@@ -341,7 +413,7 @@ def test_scroll_and_extract_cutoff_none_disables_age_based_stopping(monkeypatch)
         for i in range(10)
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, "g1", limit=10, cutoff=None, max_scrolls=15)
+    result, _ = scraper._scroll_and_extract(page, "g1", limit=10, cutoff=None, max_scrolls=15)
     assert len(result) == 10
 
 
@@ -350,8 +422,21 @@ def test_scroll_and_extract_respects_max_scrolls_cap(monkeypatch):
     page = _fixed_count_page(2)  # the DOM never grows past 2 articles
     single_post = scraper.RawPost(post_url="https://fb.com/1", author="a", text="t")
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: single_post)
-    result = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=None, max_scrolls=3)
+    result, _ = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=None, max_scrolls=3)
     assert len(result) == 1  # never reaches `limit`; terminates via max_scrolls, not a hang
+
+
+def test_scroll_and_extract_reports_no_articles_seen_when_feed_renders_empty(monkeypatch):
+    """The soft-block signal cli.py's cross-group escalation relies on:
+    zero [role="article"] matches for the whole scroll pass, distinct from
+    zero *results* (which just means nothing new since the cutoff)."""
+    monkeypatch.setattr(scraper, "_jitter", lambda *_: None)
+    page = _fixed_count_page(0)
+    result, saw_any_article = scraper._scroll_and_extract(
+        page, "g1", limit=10, cutoff=None, max_scrolls=3
+    )
+    assert result == []
+    assert saw_any_article is False
 
 
 def test_scroll_and_extract_detects_a_mid_session_checkpoint(monkeypatch):
@@ -396,11 +481,12 @@ def test_scrape_group_closes_its_page_on_success(monkeypatch):
     monkeypatch.setattr(scraper, "_jitter", lambda *_: None)
     monkeypatch.setattr(scraper, "_blocked_reason", lambda page: None)
     monkeypatch.setattr(scraper, "_force_chronological_sort", lambda page: True)
-    monkeypatch.setattr(scraper, "_scroll_and_extract", lambda *a, **k: [])
+    monkeypatch.setattr(scraper, "_scroll_and_extract", lambda *a, **k: ([], True))
     context = MagicMock()
     group = FacebookGroup(name="g1", url="https://facebook.com/groups/1")
-    result = scraper.scrape_group(context, group, limit=10)
+    result, saw_any_article = scraper.scrape_group(context, group, limit=10)
     assert result == []
+    assert saw_any_article is True
     context.new_page.return_value.close.assert_called_once()
 
 
@@ -422,7 +508,7 @@ def test_scrape_group_does_not_open_its_own_browser_session(monkeypatch):
     monkeypatch.setattr(scraper, "_jitter", lambda *_: None)
     monkeypatch.setattr(scraper, "_blocked_reason", lambda page: None)
     monkeypatch.setattr(scraper, "_force_chronological_sort", lambda page: True)
-    monkeypatch.setattr(scraper, "_scroll_and_extract", lambda *a, **k: [])
+    monkeypatch.setattr(scraper, "_scroll_and_extract", lambda *a, **k: ([], True))
     context = MagicMock()
     group = FacebookGroup(name="g1", url="https://facebook.com/groups/1")
     scraper.scrape_group(context, group, limit=10)

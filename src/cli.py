@@ -23,7 +23,7 @@ from . import (
 from .browser import login_and_save_session, open_scan_session
 from .config import Config, load_config
 from .listing_models import Listing
-from .listing_parser import is_offer_listing, parse_listing
+from .listing_parser import is_offer_listing, looks_like_explicit_apartment_seeker, parse_listing
 from .scraper import (
     RawPost,
     ScanAlreadyRunning,
@@ -35,7 +35,9 @@ from .scraper import (
 
 console = Console()
 
+_SOFT_BLOCK_EMPTY_GROUP_THRESHOLD = 2  # groups returning 0 posts before treating it as a block
 _DEAD_LINK_CHECK_LIMIT = 20  # cap per run — never re-check the whole history
+_DEAD_LINK_PRUNE_INTERVAL = timedelta(days=1)  # throttled — see _dead_link_prune_due
 _DEAD_LINK_MARKERS = (
     "content isn't available",
     "this content isn't available right now",
@@ -53,6 +55,13 @@ def _extract_listing(post: RawPost, group_name: str, config: Config) -> Listing 
     classified the post as not an offer, which is a real verdict, not a
     fallback signal."""
     if config.llm.active:
+        if looks_like_explicit_apartment_seeker(post.text):
+            # A narrow, high-precision "not an offer" signal, checked
+            # before spending a paced/budgeted Gemini call — see
+            # looks_like_explicit_apartment_seeker's docstring for why
+            # it's safe to skip the LLM here specifically (it never
+            # matches ambiguous phrasing like "looking for a roommate").
+            return None
         try:
             return llm_extractor.extract(
                 post.text,
@@ -125,13 +134,31 @@ def _compute_cutoff(config: Config) -> datetime:
     """The first scan ever run looks back initial_lookback_days; every scan
     after that looks back to the last successful scan instead (self-healing
     if a run was missed), capped so a long outage never scans further back
-    than initial_lookback_days."""
+    than initial_lookback_days.
+
+    Also capped at `now`: on an unattended device (a Termux/Android tablet
+    where clock drift/NTP resync after a reboot is plausible), a
+    last_scan_completed_at recorded under a clock that was briefly ahead
+    of correct time could otherwise sit in the future relative to the
+    current (corrected) `now` — every real post would then look "older
+    than cutoff" and the scan would skip everything with no error
+    surfaced."""
     now = datetime.now(timezone.utc)
     floor = now - timedelta(days=config.scan_window.initial_lookback_days)
     last = scan_state.load_last_scan_completed_at()
     if last is None:
         return floor
-    return max(last, floor)
+    return min(max(last, floor), now)
+
+
+def _dead_link_prune_due() -> bool:
+    """Dead-link pruning revisits up to _DEAD_LINK_CHECK_LIMIT permalinks
+    sequentially in the same authenticated session — real added traffic
+    and wall-clock cost on every run it happens. Listings rarely go dead
+    within hours of matching, so once a day is plenty; no reason to pay
+    that cost on every twice-daily scan."""
+    last = scan_state.load_last_dead_link_prune_at()
+    return last is None or datetime.now(timezone.utc) - last >= _DEAD_LINK_PRUNE_INTERVAL
 
 
 def _prune_dead_links(context, conn) -> None:
@@ -174,15 +201,19 @@ def _scan(config: Config, args) -> bool:
     groups = list(config.facebook_groups)
     random.shuffle(groups)  # don't scan in the same fixed order every run
     new_match_count = 0
+    empty_group_count = 0
     with store.connect() as conn, open_scan_session(headless=not args.headed) as context:
-        if not args.dry_run:
+        if not args.dry_run and _dead_link_prune_due():
             _prune_dead_links(context, conn)
+            scan_state.record_dead_link_prune_completed()
         for i, group in enumerate(groups):
             if i > 0:
                 jitter_between_groups()
             console.rule(f"Scanning {group.name}")
             try:
-                posts = scrape_group(context, group, limit=config.posts_per_group, cutoff=cutoff)
+                posts, saw_any_article = scrape_group(
+                    context, group, limit=config.posts_per_group, cutoff=cutoff
+                )
             except ScraperBlocked as exc:
                 console.print(f"[red]Blocked by Facebook:[/] {exc}")
                 console.print("[red]Stopping this scan — check your session/login.[/]")
@@ -199,6 +230,31 @@ def _scan(config: Config, args) -> bool:
                 )
                 continue
             console.print(f"Fetched {len(posts)} posts")
+
+            if not saw_any_article:
+                # The page loaded fine (no checkpoint/login wall — that's
+                # ScraperBlocked's job above) but rendered zero posts at
+                # all, not just zero new-since-cutoff ones. A single
+                # occurrence is plausibly just a markup hiccup or a truly
+                # dead-quiet group; 2+ in the same run is what a Facebook
+                # soft-block (a working-looking but content-stripped page,
+                # with no login wall to trip _blocked_reason()) can look
+                # like, so that's the bar for treating it as a likely
+                # block rather than noise.
+                empty_group_count += 1
+                if empty_group_count >= _SOFT_BLOCK_EMPTY_GROUP_THRESHOLD:
+                    console.print(
+                        f"[red]{empty_group_count} groups returned zero posts despite loading "
+                        "normally — stopping this scan, possible soft-block.[/]"
+                    )
+                    _send_heartbeat(
+                        config,
+                        args,
+                        f"🔴 Scan stopped — {empty_group_count} groups returned zero posts "
+                        "despite loading normally (possible soft-block or a markup change). "
+                        "Check your session.",
+                    )
+                    return True
 
             for post in posts:
                 if store.listing_seen(conn, post.post_url):
@@ -310,6 +366,7 @@ def _scan(config: Config, args) -> bool:
     # blocked run doesn't advance the watermark and the next run safely
     # re-covers that time range (cheap: dedup already makes it a no-op for
     # anything already stored).
+    sheets.flush()  # one re-sort for the whole scan, not one per listing
     scan_state.record_scan_completed()
     word = "match" if new_match_count == 1 else "matches"
     _send_heartbeat(config, args, f"✅ Scan complete — {new_match_count} new {word}.")

@@ -6,8 +6,10 @@ from src.listing_parser import (
     _extract_duration_days,
     _extract_lease_dates,
     _extract_phone,
+    _extract_price,
     _parse_date_token,
     is_offer_listing,
+    looks_like_explicit_apartment_seeker,
     parse_listing,
 )
 
@@ -30,6 +32,28 @@ def test_is_offer_listing_rejects_seeker_post():
 def test_is_offer_listing_rejects_unrelated_post():
     text = "מי מכיר מסעדה טובה בפלורנטין?"
     assert is_offer_listing(text) is False
+
+
+def test_looks_like_explicit_apartment_seeker_detects_hebrew():
+    assert looks_like_explicit_apartment_seeker("מחפשת דירה בפלורנטין לחודש הבא") is True
+
+
+def test_looks_like_explicit_apartment_seeker_detects_english():
+    assert looks_like_explicit_apartment_seeker("Looking for an apartment in Florentin") is True
+
+
+def test_looks_like_explicit_apartment_seeker_ignores_roommate_wanted_posts():
+    """"מחפש שותף" ("looking for a roommate") is usually someone OFFERING a
+    room in their own apartment, not seeking one — must not be caught by
+    this narrower, high-precision check (unlike the broader
+    is_offer_listing(), which would wrongly reject it)."""
+    text = "מחפש שותף/ה לדירה שלי בפלורנטין, חדר פנוי מיידי"
+    assert looks_like_explicit_apartment_seeker(text) is False
+
+
+def test_looks_like_explicit_apartment_seeker_false_for_offer_post():
+    text = "סאבלט בפלורנטין, 2 חדרים, 4500 ₪ לחודש"
+    assert looks_like_explicit_apartment_seeker(text) is False
 
 
 def test_parse_listing_extracts_price_rooms_and_neighborhood():
@@ -95,6 +119,33 @@ def test_extract_price_handles_plain_digits_without_thousands_separator():
     )
 
     assert listing.price == 3000
+
+
+def test_extract_price_matches_per_month_phrasing_without_a_currency_word():
+    assert _extract_price("סאבלט בפלורנטין, 4000 לחודש") == 4000
+
+
+def test_extract_price_matches_bechodesh_phrasing():
+    assert _extract_price("סאבלט, 3500 בחודש") == 3500
+
+
+def test_extract_price_matches_a_price_label_prefix():
+    assert _extract_price("סאבלט בפלורנטין. מחיר: 4500") == 4500
+
+
+def test_extract_price_matches_price_label_with_dash():
+    assert _extract_price("Sublet in Florentin. Price - 4200") == 4200
+
+
+def test_extract_price_matches_english_per_month_phrasing():
+    assert _extract_price("Sublet in Florentin, 3800 a month") == 3800
+
+
+def test_extract_price_still_none_for_a_bare_unqualified_number():
+    """A number with no currency word, no "per month" phrase, and no
+    "price:" label must not be guessed as a price — e.g. a room count or
+    an address number sitting elsewhere in the text."""
+    assert _extract_price("סאבלט, 3 חדרים ברחוב הרצל 44") is None
 
 
 def test_parse_listing_detects_separate_toilet_shower():

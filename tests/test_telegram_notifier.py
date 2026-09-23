@@ -1,6 +1,8 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from src.config import SearchConfig
 from src.listing_models import Listing
 from src.telegram_notifier import format_alert, send_listing, send_text
@@ -99,10 +101,18 @@ def test_format_alert_shows_distance_when_geocoded():
     assert "350m from target zone" in format_alert(listing, make_profile(), 80)
 
 
-def _mock_response(ok=True):
+def _mock_response(ok=True, status_code=200, retry_after=None):
     resp = MagicMock()
-    resp.raise_for_status.return_value = None
-    resp.json.return_value = {"ok": ok}
+    resp.status_code = status_code
+    if status_code == 200:
+        resp.raise_for_status.return_value = None
+    else:
+        resp.raise_for_status.side_effect = requests.exceptions.HTTPError(f"HTTP {status_code}")
+    body = {"ok": ok}
+    if retry_after is not None:
+        body["parameters"] = {"retry_after": retry_after}
+    resp.json.return_value = body
+    resp.headers = {}
     return resp
 
 
@@ -119,6 +129,33 @@ def test_send_text_returns_false_when_not_ok():
 def test_send_text_returns_false_on_request_failure():
     with patch("src.telegram_notifier._session.post", side_effect=Exception("network down")):
         assert send_text("token", "chat", "hello") is False
+
+
+def test_send_text_retries_once_after_a_429_then_succeeds(monkeypatch):
+    sleep_calls = []
+    monkeypatch.setattr("src.telegram_notifier.time.sleep", lambda s: sleep_calls.append(s))
+    responses = iter([_mock_response(status_code=429, retry_after=2), _mock_response(ok=True)])
+    with patch(
+        "src.telegram_notifier._session.post", side_effect=lambda *a, **k: next(responses)
+    ) as mock_post:
+        assert send_text("token", "chat", "hello") is True
+    assert mock_post.call_count == 2
+    assert sleep_calls == [2.0]
+
+
+def test_send_text_gives_up_after_a_second_429(monkeypatch):
+    monkeypatch.setattr("src.telegram_notifier.time.sleep", lambda s: None)
+    responses = iter(
+        [
+            _mock_response(status_code=429, retry_after=1),
+            _mock_response(status_code=429, retry_after=1),
+        ]
+    )
+    with patch(
+        "src.telegram_notifier._session.post", side_effect=lambda *a, **k: next(responses)
+    ) as mock_post:
+        assert send_text("token", "chat", "hello") is False
+    assert mock_post.call_count == 2  # exactly one retry, never an infinite loop
 
 
 def test_send_listing_plain_text_when_no_images():

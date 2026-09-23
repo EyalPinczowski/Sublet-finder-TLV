@@ -74,13 +74,25 @@ def test_compute_cutoff_caps_a_long_outage_at_initial_lookback(monkeypatch):
     assert cutoff > long_ago
 
 
+def test_compute_cutoff_never_exceeds_now_under_clock_skew(monkeypatch):
+    """A last_scan_completed_at recorded under a briefly-ahead clock (e.g.
+    an unattended tablet's clock drifting before an NTP resync) must not
+    produce a cutoff in the future — that would make every real post look
+    "older than cutoff" and silently skip the whole scan."""
+    future = datetime.now(timezone.utc) + timedelta(hours=6)
+    monkeypatch.setattr(scan_state, "load_last_scan_completed_at", lambda: future)
+    config = make_config(scan_window=ScanWindowConfig(initial_lookback_days=4))
+    cutoff = cli._compute_cutoff(config)
+    assert cutoff <= datetime.now(timezone.utc)
+
+
 # --- _scan: scan-state write only on a clean, unblocked completion ---
 
 
 def test_scan_records_completion_when_all_groups_succeed(isolated_db, monkeypatch):
     monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
     monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
-    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([], True))
     monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
     recorded = []
     monkeypatch.setattr(scan_state, "record_scan_completed", lambda: recorded.append(True))
@@ -103,7 +115,7 @@ def test_scan_skips_recording_when_a_group_is_blocked(isolated_db, monkeypatch):
 
     def fake_scrape(context, group, **kwargs):
         if group.name == "g1":
-            return []
+            return [], True
         raise ScraperBlocked("g2: checkpoint")
 
     monkeypatch.setattr(cli, "scrape_group", fake_scrape)
@@ -120,6 +132,89 @@ def test_scan_skips_recording_when_a_group_is_blocked(isolated_db, monkeypatch):
     assert recorded == []
 
 
+def test_scan_aborts_after_two_groups_render_zero_articles(isolated_db, monkeypatch):
+    """A Facebook soft-block can serve a working-looking page with no
+    login wall but zero rendered posts — distinct from a group that just
+    has nothing new since the cutoff (saw_any_article=True, posts=[])."""
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(cli.random, "shuffle", lambda seq: None)
+    reached = []
+
+    def fake_scrape(context, group, **kwargs):
+        reached.append(group.name)
+        return [], False  # every group renders nothing at all
+
+    monkeypatch.setattr(cli, "scrape_group", fake_scrape)
+    recorded = []
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: recorded.append(True))
+    sent = []
+    monkeypatch.setattr(cli.telegram_notifier, "send_text", lambda *a, **k: sent.append(a[2]))
+    config = make_config(
+        telegram=_telegram_config(),
+        facebook_groups=[
+            FacebookGroup(name="g1", url="https://facebook.com/groups/1"),
+            FacebookGroup(name="g2", url="https://facebook.com/groups/2"),
+            FacebookGroup(name="g3", url="https://facebook.com/groups/3"),
+        ],
+    )
+    blocked = cli._scan(config, _Args())
+    assert blocked is True
+    assert reached == ["g1", "g2"]  # stopped after the 2nd empty group, never reached g3
+    assert recorded == []
+    assert len(sent) == 1
+    assert "soft-block" in sent[0].lower() or "zero posts" in sent[0].lower()
+
+
+def test_scan_does_not_abort_on_a_single_empty_group(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(cli.random, "shuffle", lambda seq: None)
+    reached = []
+
+    def fake_scrape(context, group, **kwargs):
+        reached.append(group.name)
+        return ([], False) if group.name == "g1" else ([], True)
+
+    monkeypatch.setattr(cli, "scrape_group", fake_scrape)
+    recorded = []
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: recorded.append(True))
+    config = make_config(
+        facebook_groups=[
+            FacebookGroup(name="g1", url="https://facebook.com/groups/1"),
+            FacebookGroup(name="g2", url="https://facebook.com/groups/2"),
+        ]
+    )
+    blocked = cli._scan(config, _Args())
+    assert blocked is False
+    assert reached == ["g1", "g2"]  # both groups scanned normally
+    assert recorded == [True]
+
+
+def test_scan_does_not_count_a_normal_empty_result_toward_soft_block(isolated_db, monkeypatch):
+    """saw_any_article=True with zero posts (nothing new since the cutoff)
+    is normal, healthy operation — it must never contribute toward the
+    soft-block escalation counter."""
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([], True))
+    recorded = []
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: recorded.append(True))
+    config = make_config(
+        facebook_groups=[
+            FacebookGroup(name="g1", url="https://facebook.com/groups/1"),
+            FacebookGroup(name="g2", url="https://facebook.com/groups/2"),
+            FacebookGroup(name="g3", url="https://facebook.com/groups/3"),
+        ]
+    )
+    blocked = cli._scan(config, _Args())
+    assert blocked is False
+    assert recorded == [True]
+
+
 def test_scan_continues_to_next_group_on_a_generic_exception(isolated_db, monkeypatch):
     """Unlike ScraperBlocked (which stops the whole scan), any other
     exception from one group should only skip that group."""
@@ -133,7 +228,7 @@ def test_scan_continues_to_next_group_on_a_generic_exception(isolated_db, monkey
         if group.name == "g1":
             raise RuntimeError("Playwright hiccup")
         reached.append(group.name)
-        return []
+        return [], True
 
     monkeypatch.setattr(cli, "scrape_group", fake_scrape)
     recorded = []
@@ -161,7 +256,7 @@ def test_scan_passes_computed_cutoff_to_scrape_group(isolated_db, monkeypatch):
 
     def fake_scrape(context, group, limit, cutoff):
         seen_cutoffs.append(cutoff)
-        return []
+        return [], True
 
     monkeypatch.setattr(cli, "scrape_group", fake_scrape)
     cli._scan(make_config(), _Args())
@@ -192,6 +287,106 @@ def test_prune_dead_links_noop_when_no_matched_listings(isolated_db):
         cli._prune_dead_links(MagicMock(), conn)  # must not raise
 
 
+# --- dead-link pruning: throttled to roughly once a day ---
+
+
+def test_dead_link_prune_due_when_never_pruned_before(isolated_db):
+    assert cli._dead_link_prune_due() is True
+
+
+def test_dead_link_prune_not_due_right_after_pruning(isolated_db):
+    scan_state.record_dead_link_prune_completed()
+    assert cli._dead_link_prune_due() is False
+
+
+def test_dead_link_prune_due_again_after_the_interval_passes(isolated_db):
+    scan_state.record_dead_link_prune_completed(
+        datetime.now(timezone.utc) - timedelta(days=2)
+    )
+    assert cli._dead_link_prune_due() is True
+
+
+def test_scan_skips_pruning_when_not_due(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([], True))
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+    scan_state.record_dead_link_prune_completed()  # just pruned — not due again
+
+    prune_calls = []
+    monkeypatch.setattr(
+        cli, "_prune_dead_links", lambda context, conn: prune_calls.append(1)
+    )
+    cli._scan(make_config(), _Args())
+    assert prune_calls == []
+
+
+def test_scan_prunes_and_records_when_due(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([], True))
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+
+    prune_calls = []
+    monkeypatch.setattr(
+        cli, "_prune_dead_links", lambda context, conn: prune_calls.append(1)
+    )
+    cli._scan(make_config(), _Args())
+    assert prune_calls == [1]
+    assert scan_state.load_last_dead_link_prune_at() is not None
+
+
+def test_scan_never_prunes_on_dry_run_even_when_due(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([], True))
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+
+    prune_calls = []
+    monkeypatch.setattr(
+        cli, "_prune_dead_links", lambda context, conn: prune_calls.append(1)
+    )
+    cli._scan(make_config(), _Args(dry_run=True))
+    assert prune_calls == []
+
+
+# --- _extract_listing: narrow LLM pre-filter skips explicit seeker posts ---
+
+
+def _llm_config():
+    from src.config import LLMConfig
+
+    return LLMConfig(enabled=True, api_key="fake-key")
+
+
+def test_extract_listing_skips_llm_call_for_explicit_seeker_post(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.llm_extractor, "extract", lambda *a, **k: calls.append(1))
+    post = RawPost(post_url="https://fb.com/1", author="a", text="מחפשת דירה בפלורנטין")
+    result = cli._extract_listing(post, "g1", make_config(llm=_llm_config()))
+    assert result is None
+    assert calls == []  # never reached the paced/budgeted Gemini call
+
+
+def test_extract_listing_still_calls_llm_for_roommate_wanted_post(monkeypatch):
+    """"מחפש שותף" ("looking for a roommate") must still go through the LLM
+    — it's ambiguous (often an offer), unlike an explicit "looking for an
+    apartment" post."""
+    listing = Listing(post_url="https://fb.com/1", group_name="g1", raw_text="t")
+    monkeypatch.setattr(cli.llm_extractor, "extract", lambda *a, **k: listing)
+    post = RawPost(post_url="https://fb.com/1", author="a", text="מחפש שותף לדירה שלי בפלורנטין")
+    result = cli._extract_listing(post, "g1", make_config(llm=_llm_config()))
+    assert result is listing
+
+
+def test_extract_listing_calls_llm_for_a_normal_offer_post(monkeypatch):
+    listing = Listing(post_url="https://fb.com/1", group_name="g1", raw_text="t")
+    monkeypatch.setattr(cli.llm_extractor, "extract", lambda *a, **k: listing)
+    post = RawPost(post_url="https://fb.com/1", author="a", text="סאבלט בפלורנטין, 4500 ₪")
+    result = cli._extract_listing(post, "g1", make_config(llm=_llm_config()))
+    assert result is listing
+
+
 # --- freshness scoring: post.posted_at must actually reach scoring.score ---
 
 
@@ -208,7 +403,7 @@ def test_scan_threads_post_age_into_scoring(isolated_db, monkeypatch):
 
     posted_at = datetime.now(timezone.utc) - timedelta(hours=5)
     post = RawPost(post_url="https://fb.com/1", author="a", text="t", posted_at=posted_at)
-    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [post])
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
 
     listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t")
     monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
@@ -236,7 +431,7 @@ def test_scan_leaves_age_hours_none_when_post_has_no_timestamp(isolated_db, monk
     monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
 
     post = RawPost(post_url="https://fb.com/1", author="a", text="t", posted_at=None)
-    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [post])
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
 
     listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t")
     monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
@@ -267,7 +462,7 @@ def test_scan_skips_geocoding_when_cheap_filters_already_fail(isolated_db, monke
     monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
 
     post = RawPost(post_url="https://fb.com/1", author="a", text="t")
-    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [post])
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
     listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t")
     monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
     monkeypatch.setattr(cli.listing_filters, "matches_without_location", lambda *a, **k: False)
@@ -286,7 +481,7 @@ def test_scan_geocodes_when_cheap_filters_pass(isolated_db, monkeypatch):
     monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
 
     post = RawPost(post_url="https://fb.com/1", author="a", text="t")
-    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [post])
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
     listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t")
     monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
     _patch_matches_everything(monkeypatch)
@@ -336,7 +531,7 @@ def test_scan_sends_success_heartbeat_with_match_count(isolated_db, monkeypatch)
     monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
 
     post = RawPost(post_url="https://fb.com/1", author="a", text="t")
-    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [post])
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
     listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t")
     monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
     _patch_matches_everything(monkeypatch)
@@ -407,7 +602,7 @@ def test_scan_commits_once_per_group_processed(isolated_db, monkeypatch):
     monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
     monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
     monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
-    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([], True))
 
     commit_calls: list = []
     real_connect = store.connect

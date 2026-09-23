@@ -26,9 +26,20 @@ SEEKER_KEYWORDS = [
 
 # Comma/period-grouped thousands (e.g. "4,500") or a plain digit run (e.g.
 # "3000"); the lookaround guards stop either alternative from matching a
-# partial substring of a longer number.
+# partial substring of a longer number. Reused across all three
+# alternatives below via the same capture-group shape.
+_PRICE_NUMBER = r'(?<!\d)(\d{1,3}(?:[,.]\d{3})+|\d{2,6})(?!\d)'
+# Three ways a price shows up: a currency marker right after the number
+# (the original, tightest case), a "per month" phrase right after it with
+# no currency word at all ("4000 לחודש"), or a "price:"-style label right
+# before it ("מחיר: 4000"). Each stays tightly anchored (no free-floating
+# unqualified number) to avoid matching a phone number, room count, or
+# address digit that happens to be nearby.
 PRICE_RE = re.compile(
-    r'(?<!\d)(\d{1,3}(?:[,.]\d{3})+|\d{2,6})(?!\d)\s*(?:₪|ש"ח|שקל|nis)', re.IGNORECASE
+    _PRICE_NUMBER + r'\s*(?:₪|ש"ח|שקל|nis)'
+    r"|" + _PRICE_NUMBER + r"\s*/?\s*(?:לחודש|בחודש|חודשי|per\s*month|a\s*month|monthly)"
+    r"|(?:מחיר|price)\s*[:\-]?\s*" + _PRICE_NUMBER,
+    re.IGNORECASE,
 )
 # "חד(?!\w)" excludes construct-state phrases like "חדרי רחצה" (bathrooms)
 # or "חדרי שינה" (bedrooms), which aren't the total room count.
@@ -182,11 +193,38 @@ def is_offer_listing(text: str) -> bool:
     return any(k.lower() in lowered for k in OFFER_KEYWORDS)
 
 
+# Deliberately narrower than SEEKER_KEYWORDS/is_offer_listing: the seeker verb
+# must be immediately followed by "apartment"/"sublet" itself, not just occur
+# anywhere in the post. This excludes the very common "מחפש/ת שותף" ("looking
+# for a roommate") pattern, which is usually someone OFFERING a room in their
+# own apartment, not seeking one — a plain SEEKER_KEYWORDS match would wrongly
+# treat that as a non-offer. Used only to skip a paced/budgeted LLM call for a
+# post that's near-certainly not an offer (see cli._extract_listing); every
+# other post — including "looking for a roommate" ones — still goes to the
+# LLM, which remains the source of truth for anything ambiguous.
+_EXPLICIT_APARTMENT_SEEKER_RE = re.compile(
+    r"(?:מחפש|מחפשת|מחפשים|looking for|searching for)\s+"
+    r"(?:דירה|סאבלט|סבלט|an?\s+apartment|a\s+sublet|apartment|sublet)",
+    re.IGNORECASE,
+)
+
+
+def looks_like_explicit_apartment_seeker(text: str) -> bool:
+    """True only for an explicit "I'm looking for an apartment/sublet"
+    phrasing — see _EXPLICIT_APARTMENT_SEEKER_RE for why this is narrower
+    than is_offer_listing()'s SEEKER_KEYWORDS check."""
+    return bool(_EXPLICIT_APARTMENT_SEEKER_RE.search(text or ""))
+
+
 def _extract_price(text: str) -> int | None:
     match = PRICE_RE.search(text)
     if not match:
         return None
-    return int(match.group(1).replace(",", "").replace(".", ""))
+    # Exactly one of the three alternatives' groups is populated, depending
+    # on which one matched (currency marker / "per month" phrase / "price:"
+    # label) — see PRICE_RE.
+    raw = next(g for g in match.groups() if g is not None)
+    return int(raw.replace(",", "").replace(".", ""))
 
 
 def _extract_rooms(text: str) -> float | None:

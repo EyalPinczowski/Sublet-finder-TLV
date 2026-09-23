@@ -216,6 +216,18 @@ def validate(config: Config) -> None:
     if len(names) != len(set(names)):
         problems.append(f"search profile names must be unique, got: {names}")
     for profile in config.searches:
+        # Profile names and neighborhood names are stored comma-joined
+        # (store.py's matched_profiles/neighborhoods columns) and split
+        # back on the same separator — a literal comma here would
+        # silently corrupt that round-trip.
+        if "," in profile.name:
+            problems.append(f"search profile name {profile.name!r} must not contain a comma")
+        for neighborhood in profile.neighborhoods:
+            if "," in neighborhood:
+                problems.append(
+                    f"searches[{profile.name!r}].neighborhoods entry {neighborhood!r} "
+                    "must not contain a comma"
+                )
         if (
             profile.price_min is not None
             and profile.price_max is not None
@@ -258,6 +270,14 @@ def validate(config: Config) -> None:
         problems.append(
             f"scan_window.initial_lookback_days "
             f"({config.scan_window.initial_lookback_days}) must be > 0"
+        )
+    bot_token_set = bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
+    chat_id_set = bool(os.environ.get("TELEGRAM_CHAT_ID"))
+    if bot_token_set != chat_id_set:
+        missing = "TELEGRAM_CHAT_ID" if bot_token_set else "TELEGRAM_BOT_TOKEN"
+        problems.append(
+            f"{missing} is not set in .env, but the other Telegram variable is — "
+            "set both to enable Telegram alerts, or neither to disable them"
         )
     if problems:
         raise SystemExit("config error — fix config.yaml:\n  - " + "\n  - ".join(problems))

@@ -320,17 +320,25 @@ def recent_matched_http_urls(conn, limit: int) -> list[str]:
 def list_listings(
     conn, matched_only: bool = True, include_dismissed: bool = False
 ) -> list[ListingRow]:
-    query = "SELECT * FROM listings WHERE 1=1"
+    """Filters dismissed rows in SQL via NOT EXISTS (mirroring
+    recent_matched_http_urls's pattern) rather than fetching every matched
+    row AND every dismissed post_url in the whole DB history and diffing
+    them in Python — this is the query behind every dashboard page load
+    and `matches` run, and the old approach's cost grew with total
+    accumulated history rather than staying flat."""
+    query = "SELECT * FROM listings l WHERE 1=1"
     params: list = []
     if matched_only:
-        query += " AND matched = 1"
-    query += " ORDER BY score DESC, created_at DESC"
+        query += " AND l.matched = 1"
+    if not include_dismissed:
+        query += (
+            " AND NOT EXISTS ("
+            "  SELECT 1 FROM marks m WHERE m.post_url = l.post_url AND m.mark = 'dismiss'"
+            ")"
+        )
+    query += " ORDER BY l.score DESC, l.created_at DESC"
     rows = conn.execute(query, params).fetchall()
-    listings = [ListingRow(**dict(r)) for r in rows]
-    if include_dismissed:
-        return listings
-    dismissed = _dismissed_post_urls(conn)
-    return [row for row in listings if row.post_url not in dismissed]
+    return [ListingRow(**dict(r)) for r in rows]
 
 
 # --- votes: ⭐ save / 🗑 dismiss (Telegram buttons and the dashboard) ---
@@ -354,13 +362,6 @@ def mark_listing_dead(conn, post_url: str) -> None:
     it's filtered out by list_listings()/is_dismissed() the same way a
     human's dismiss is, without a new column or a separate exclusion path."""
     add_mark(conn, post_url, _DEAD_LINK_USER_ID, "dismiss")
-
-
-def _dismissed_post_urls(conn) -> set[str]:
-    """Every post_url with a dismiss mark, in one query — the batch form
-    list_listings() uses instead of an is_dismissed() call per row."""
-    rows = conn.execute("SELECT DISTINCT post_url FROM marks WHERE mark = 'dismiss'").fetchall()
-    return {row["post_url"] for row in rows}
 
 
 def is_dismissed(conn, post_url: str) -> bool:

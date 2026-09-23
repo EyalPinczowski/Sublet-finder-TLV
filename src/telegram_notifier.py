@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 import requests
 
@@ -114,16 +115,43 @@ def send_text(bot_token: str, chat_id: str, text: str) -> bool:
     return bool(resp and resp.get("ok"))
 
 
-def _post(bot_token: str, method: str, payload: dict, timeout: int) -> dict | None:
+def _retry_after_seconds(resp) -> float:
+    """Telegram's rate-limit hint, from the JSON body's parameters.retry_after
+    (its own documented field) or the standard Retry-After header, in that
+    order — falling back to a small default if neither is present."""
     try:
-        r = _session.post(
-            f"https://api.telegram.org/bot{bot_token}/{method}", json=payload, timeout=timeout
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception as exc:
-        print(f"[telegram_notifier] {method} failed: {exc}")
-        return None
+        retry_after = resp.json().get("parameters", {}).get("retry_after")
+        if retry_after:
+            return float(retry_after)
+    except Exception:
+        pass
+    try:
+        return float(resp.headers.get("Retry-After", 1))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _post(bot_token: str, method: str, payload: dict, timeout: int) -> dict | None:
+    url = f"https://api.telegram.org/bot{bot_token}/{method}"
+    for attempt in range(2):  # one retry, only for a 429 — see below
+        try:
+            r = _session.post(url, json=payload, timeout=timeout)
+            if r.status_code == 429 and attempt == 0:
+                # A scan can send several calls per matched listing (photo/
+                # album + a follow-up keyboard message), and several
+                # matches in one run can trip Telegram's per-chat rate
+                # limit — retrying once rather than dropping the alert
+                # silently is worth the wait on an unattended cron box.
+                wait = _retry_after_seconds(r)
+                print(f"[telegram_notifier] {method} rate-limited, retrying after {wait:.0f}s")
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:
+            print(f"[telegram_notifier] {method} failed: {exc}")
+            return None
+    return None
 
 
 def send_listing(

@@ -7,6 +7,8 @@ from src.listing_models import Listing
 def _isolate(monkeypatch):
     monkeypatch.setattr(sheets, "_sheet", None)
     monkeypatch.setattr(sheets, "_checked", False)
+    monkeypatch.setattr(sheets, "_existing_urls", None)
+    monkeypatch.setattr(sheets, "_dirty", False)
 
 
 def make_listing(**overrides) -> Listing:
@@ -101,6 +103,89 @@ def test_skips_duplicate_post_url(monkeypatch, tmp_path):
         sheets.save_listing(listing)
 
     ws.append_row.assert_not_called()
+
+
+# --- batching: one col_values() read and one resort per scan, not per listing ---
+
+
+def test_save_listing_never_resorts_directly(monkeypatch, tmp_path):
+    """Resorting moved to flush() — a single save_listing() call must not
+    trigger a sort on its own."""
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing())
+
+    ws.sort.assert_not_called()
+
+
+def test_multiple_saves_read_existing_urls_only_once(monkeypatch, tmp_path):
+    """col_values(1) — a full-column read — must happen once per process,
+    not once per matched listing in a scan."""
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing(post_url="https://facebook.com/groups/1/posts/1"))
+        sheets.save_listing(make_listing(post_url="https://facebook.com/groups/1/posts/2"))
+
+    assert ws.col_values.call_count == 1
+    assert ws.append_row.call_count == 2  # 2 data rows (header already present)
+
+
+def test_flush_resorts_once_when_something_was_saved(monkeypatch, tmp_path):
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing(post_url="https://facebook.com/groups/1/posts/1"))
+        sheets.save_listing(make_listing(post_url="https://facebook.com/groups/1/posts/2"))
+        sheets.flush()
+
+    ws.sort.assert_called_once()
+
+
+def test_flush_skips_resort_when_nothing_was_saved(monkeypatch, tmp_path):
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    listing = make_listing()
+    ws = _fake_worksheet([sheets.HEADER, [listing.post_url]])  # already present -> skipped
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(listing)
+        sheets.flush()
+
+    ws.sort.assert_not_called()
+
+
+def test_flush_noop_when_sink_unconfigured(monkeypatch):
+    _isolate(monkeypatch)
+    monkeypatch.delenv("GOOGLE_SHEET_ID", raising=False)
+    sheets.flush()  # must not raise
 
 
 def test_suitable_for_one_person():

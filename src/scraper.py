@@ -199,11 +199,19 @@ def _post_timestamp(article) -> datetime | None:
     first (title/aria-label on the post's time element), then falls back to
     parsing that same element's visible relative-time text. Returns None —
     never a guess — when neither works; callers must treat that as "unknown
-    age", never as "old enough to stop"."""
+    age", never as "old enough to stop".
+
+    Checks count() before touching the locator's waiting methods — when
+    nothing matches at all, get_attribute()/inner_text() would otherwise
+    wait out their full timeout hoping the element appears, and this
+    selector legitimately has no match on plenty of posts."""
     try:
-        time_el = article.locator(
+        time_el_loc = article.locator(
             "a[href*='/posts/'] abbr, a[href*='/posts/'] span, [role='link'] abbr"
-        ).first
+        )
+        if time_el_loc.count() == 0:
+            return None
+        time_el = time_el_loc.first
         raw_attr = time_el.get_attribute("title", timeout=500) or time_el.get_attribute(
             "aria-label", timeout=500
         )
@@ -243,6 +251,12 @@ _CONSECUTIVE_OLD_TO_STOP = 3  # tolerate a stray out-of-order/pinned post
 
 
 def _extract_one_post(article) -> RawPost | None:
+    """count()-checked before every optional field's locator, same reason
+    as _post_timestamp: a "not found" selector otherwise waits out its
+    full timeout on every miss, and misses (no author link matching this
+    exact pattern, no recoverable permalink) are common, not exceptional —
+    across every post in every group in every scan, that wait time adds
+    up to real wall-clock cost for no benefit over failing fast."""
     try:
         text = article.inner_text(timeout=2000)
     except Exception:
@@ -253,15 +267,18 @@ def _extract_one_post(article) -> RawPost | None:
     author = ""
     try:
         # The author name is typically the first strong link in the post header.
-        author = article.locator("h3 a, h2 a, strong a").first.inner_text(timeout=1000)
+        author_loc = article.locator("h3 a, h2 a, strong a")
+        if author_loc.count() > 0:
+            author = author_loc.first.inner_text(timeout=500)
     except Exception:
         pass
 
     post_url = ""
     try:
         # Timestamp links are usually the permalink to the post.
-        link = article.locator('a[href*="/posts/"], a[href*="/permalink/"]').first
-        post_url = link.get_attribute("href", timeout=1000) or ""
+        link_loc = article.locator('a[href*="/posts/"], a[href*="/permalink/"]')
+        if link_loc.count() > 0:
+            post_url = link_loc.first.get_attribute("href", timeout=500) or ""
     except Exception:
         pass
 
@@ -282,7 +299,7 @@ def _extract_one_post(article) -> RawPost | None:
 
 def _scroll_and_extract(
     page: Page, group_name: str, limit: int, cutoff: datetime | None, max_scrolls: int = 15
-) -> list[RawPost]:
+) -> tuple[list[RawPost], bool]:
     """Scrolls and extracts together (rather than scroll-then-extract) so
     the cutoff-stop decision can see timestamps as they're discovered.
     Stops on whichever comes first: `limit` posts extracted (hard safety
@@ -299,11 +316,21 @@ def _scroll_and_extract(
     served mid-session (scrolling/interaction is itself a plausible
     trigger), and without this the loop would just keep scrolling a
     checkpoint page and quietly report a low/zero post count instead of
-    raising ScraperBlocked."""
+    raising ScraperBlocked.
+
+    Returns `(results, saw_any_article)` — `saw_any_article` is True the
+    moment `[role="article"]` ever matches anything during the whole
+    scroll pass, independent of the cutoff. Zero *results* after cutoff
+    filtering is normal (nothing new since the last scan); zero articles
+    *ever rendering at all* is the suspicious signal a soft block (or a
+    markup change) can look like without tripping `_blocked_reason()` —
+    see cli.py's cross-group escalation, which is what actually acts on
+    this flag."""
     seen_urls: set[str] = set()
     results: list[RawPost] = []
     examined = 0  # DOM articles already turned into a result-or-skip
     consecutive_old = 0
+    saw_any_article = False
     for _ in range(max_scrolls):
         reason = _blocked_reason(page)
         if reason:
@@ -311,6 +338,8 @@ def _scroll_and_extract(
             raise ScraperBlocked(f"{group_name}: {reason}")
         articles = page.locator('[role="article"]')
         count = articles.count()
+        if count > 0:
+            saw_any_article = True
         for i in range(examined, min(count, limit)):
             examined = i + 1
             post = _extract_one_post(articles.nth(i))
@@ -322,14 +351,14 @@ def _scroll_and_extract(
                 if post.posted_at < cutoff:
                     consecutive_old += 1
                     if consecutive_old >= _CONSECUTIVE_OLD_TO_STOP:
-                        return results
+                        return results, saw_any_article
                 else:
                     consecutive_old = 0
         if len(results) >= limit:
-            return results
+            return results, saw_any_article
         page.mouse.wheel(0, random.randint(2500, 4500))
         _jitter(_SCROLL_DELAY)
-    return results
+    return results, saw_any_article
 
 
 def jitter_between_groups() -> None:
@@ -340,11 +369,12 @@ def jitter_between_groups() -> None:
 
 def scrape_group(
     context, group: FacebookGroup, limit: int, cutoff: datetime | None = None
-) -> list[RawPost]:
+) -> tuple[list[RawPost], bool]:
     """Scrapes one group using an already-open, already-authenticated
     context (see browser.open_scan_session) — the caller owns the
     browser/context lifecycle across the whole scan; this just opens and
-    closes its own page within it."""
+    closes its own page within it. Returns `(posts, saw_any_article)` —
+    see _scroll_and_extract for what the flag means."""
     page = context.new_page()
     try:
         page.goto(group.url, wait_until="domcontentloaded")

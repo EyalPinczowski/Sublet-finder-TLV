@@ -20,7 +20,7 @@ import os
 import secrets
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import _bootstrap  # noqa: F401
 
@@ -70,17 +70,17 @@ def _card(row, token: str, score: int) -> str:
     images = row.image_urls()
     img_html = f'<img src="{html.escape(images[0])}">' if images else ""
     post_link = (
-        f'<a href="{html.escape(row.post_url)}" target="_blank">View post</a>'
+        f'<a href="{html.escape(row.post_url)}" target="_blank" rel="noreferrer">View post</a>'
         if row.post_url.startswith("http")
         else ""
     )
     map_link = build_map_url(row.address, row.lat, row.lon)
     map_link_html = (
-        f' &middot; <a href="{html.escape(map_link)}" target="_blank">Google Maps</a>'
+        f' &middot; <a href="{html.escape(map_link)}" target="_blank" '
+        'rel="noreferrer">Google Maps</a>'
         if map_link
         else ""
     )
-    post_q = quote(row.post_url, safe="")
     profiles = ", ".join(row.profile_names()) or "?"
     price = f"{row.price} ILS" if row.price is not None else "Price not listed"
     suitable_html = _suitable_badge_html(row.available_rooms)
@@ -93,6 +93,8 @@ def _card(row, token: str, score: int) -> str:
         if part
     )
     stay_html = f'<p class="stay">{html.escape(stay)}</p>' if stay else ""
+    save_form = _vote_form(token, row.post_url, "save", "⭐ Save")
+    dismiss_form = _vote_form(token, row.post_url, "dismiss", "\U0001f5d1 Dismiss")
     return f"""
     <div class="card">
       {img_html}
@@ -104,12 +106,27 @@ def _card(row, token: str, score: int) -> str:
       <p>{html.escape(row.phone or '')}</p>
       {post_link}{map_link_html}
       <p class="actions">
-        <a href="/vote?token={token}&amp;action=save&amp;post={post_q}">⭐ Save</a>
-        &nbsp;
-        <a href="/vote?token={token}&amp;action=dismiss&amp;post={post_q}">\U0001f5d1 Dismiss</a>
+        {save_form}
+        {dismiss_form}
       </p>
     </div>
     """
+
+
+def _vote_form(token: str, post_url: str, action: str, label: str) -> str:
+    # POST, not a GET link — a GET /vote used to mutate state, which meant
+    # a leaked dashboard URL (the token IS the auth, carried right there in
+    # the URL — see the module docstring) could be silently exploited by
+    # any link-prefetcher or crawler just following the Save/Dismiss links,
+    # no click needed. A POST form isn't prefetched or auto-followed.
+    return (
+        '<form method="post" action="/vote" style="display:inline">'
+        f'<input type="hidden" name="token" value="{html.escape(token)}">'
+        f'<input type="hidden" name="action" value="{html.escape(action)}">'
+        f'<input type="hidden" name="post" value="{html.escape(post_url)}">'
+        f'<button type="submit" class="link-btn">{label}</button>'
+        "</form>"
+    )
 
 
 # Leaflet + OpenStreetMap: no API key needed, unlike the Google Maps JS
@@ -136,10 +153,11 @@ markers.forEach(function (m) {
   let popup = '<b>' + m.price_label + '</b> &middot; score ' + m.score;
   if (m.suitable) { popup += '<br>' + m.suitable; }
   if (m.post_url) {
-    popup += '<br><a href="' + m.post_url + '" target="_blank">View post</a>';
+    popup += '<br><a href="' + m.post_url + '" target="_blank" rel="noreferrer">View post</a>';
   }
   if (m.map_link) {
-    popup += ' &middot; <a href="' + m.map_link + '" target="_blank">Google Maps</a>';
+    popup += ' &middot; <a href="' + m.map_link + '" target="_blank" ' +
+      'rel="noreferrer">Google Maps</a>';
   }
   marker.bindPopup(popup);
   bounds.push([m.lat, m.lon]);
@@ -206,6 +224,9 @@ body {{ font-family: sans-serif; max-width: 700px; margin: 2rem auto; padding: 0
                     padding: 0.1rem 0.5rem; font-size: 0.85em; margin-left: 0.4rem; }}
 img {{ max-width: 100%; border-radius: 4px; }}
 .actions a {{ text-decoration: none; }}
+.actions form {{ display: inline; }}
+.link-btn {{ background: none; border: none; padding: 0; font: inherit; color: #06c;
+             text-decoration: none; cursor: pointer; }}
 </style></head>
 <body>
 <h1>TLV Sublet Matches ({len(rows)})</h1>
@@ -227,14 +248,14 @@ def make_handler(token: str):
                 return
 
             if parsed.path == "/vote":
-                action = params.get("action", [""])[0]
-                post = params.get("post", [""])[0]
-                if action in ("save", "dismiss") and post:
-                    with store.connect() as conn:
-                        store.add_mark(conn, post, "dashboard", action)
-                self.send_response(302)
-                self.send_header("Location", f"/?token={token}")
+                # Save/Dismiss is a POST-only mutation — see _vote_form and
+                # do_POST. A GET here used to silently mutate state, which
+                # meant a leaked dashboard link could be exploited by any
+                # crawler/prefetcher just following it, no click needed.
+                self.send_response(405)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.end_headers()
+                self.wfile.write(b"Method Not Allowed: /vote requires POST")
                 return
 
             with store.connect() as conn:
@@ -243,6 +264,32 @@ def make_handler(token: str):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(page.encode("utf-8"))
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            if parsed.path != "/vote":
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8") if length else ""
+            params = parse_qs(body)
+            if params.get("token", [""])[0] != token:
+                self.send_response(403)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"Forbidden: missing or invalid token")
+                return
+
+            action = params.get("action", [""])[0]
+            post = params.get("post", [""])[0]
+            if action in ("save", "dismiss") and post:
+                with store.connect() as conn:
+                    store.add_mark(conn, post, "dashboard", action)
+            self.send_response(302)
+            self.send_header("Location", f"/?token={token}")
+            self.end_headers()
 
         def log_message(self, fmt, *args):  # quiet the default stderr access log
             pass

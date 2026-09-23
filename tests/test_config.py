@@ -70,6 +70,44 @@ def test_min_available_rooms_over_max_rejected():
         )
 
 
+def test_comma_in_search_profile_name_rejected():
+    with pytest.raises(SystemExit):
+        validate(make_config(searches=[SearchConfig(name="Rothschild, Center")]))
+
+
+def test_comma_in_neighborhood_name_rejected():
+    with pytest.raises(SystemExit):
+        validate(
+            make_config(searches=[SearchConfig(neighborhoods=["Florentin", "Rothschild, Center"])])
+        )
+
+
+def test_telegram_bot_token_set_alone_rejected(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    with pytest.raises(SystemExit):
+        validate(make_config())
+
+
+def test_telegram_chat_id_set_alone_rejected(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    with pytest.raises(SystemExit):
+        validate(make_config())
+
+
+def test_telegram_both_set_passes(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    validate(make_config())  # no raise
+
+
+def test_telegram_neither_set_passes(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    validate(make_config())  # no raise
+
+
 def test_multiple_distinct_profiles_pass():
     validate(
         make_config(
