@@ -85,7 +85,14 @@ def _resolve_dates(
         start = today or date.today()
         duration = (end - start).days
     if duration is not None and duration <= 0:
-        return start, None  # an end date already in the past isn't usable
+        # Unusable — including the synthetic `start = today` from the
+        # end-only branch above, which must not leak out here: a caller
+        # checking `start is not None` would otherwise read this as a
+        # real, in-window start date. matches_without_location() has its
+        # own dedicated, explicit check for a stated end date already in
+        # the past (a real rejection signal) — this is just "no usable
+        # info", the same as a listing with no dates at all.
+        return None, None
     return start, duration
 
 
@@ -118,12 +125,20 @@ def matches_without_location(
     price_min, price_max = search_cfg.price_min, search_cfg.price_max
 
     if stay_cfg is not None:
+        # A listing whose own stated end date has already passed is a real
+        # rejection signal (the post is stale/reposted), NOT the same as a
+        # listing that just doesn't mention dates at all — unlike the
+        # general soft-optional handling below, this stays a hard gate.
+        if listing.lease_end_date is not None and listing.lease_end_date < (
+            today or date.today()
+        ):
+            return False
         start, duration = _resolve_dates(listing, today=today)
-        # Dates are soft-optional, like every other field in this function —
-        # a listing with no date/duration info at all still passes (no
-        # longer a hard gate; see README "Stay length and dates"). The
-        # minimum-stay and search-window checks below still apply whenever
-        # that specific piece of info IS known.
+        # Dates are otherwise soft-optional, like every other field in this
+        # function — a listing with no date/duration info at all still
+        # passes (no longer a hard gate; see README "Stay length and
+        # dates"). The minimum-stay and search-window checks below still
+        # apply whenever that specific piece of info IS known.
         if duration is not None and duration < stay_cfg.min_days:
             return False
         if start is not None:
@@ -212,6 +227,10 @@ def explain_mismatch(
     price_min, price_max = search_cfg.price_min, search_cfg.price_max
 
     if stay_cfg is not None:
+        if listing.lease_end_date is not None and listing.lease_end_date < (
+            today or date.today()
+        ):
+            reasons.append(f"lease end date {listing.lease_end_date.isoformat()} already passed")
         start, duration = _resolve_dates(listing, today=today)
         if duration is not None and duration < stay_cfg.min_days:
             reasons.append(f"stay is {duration} days, need at least {stay_cfg.min_days}")

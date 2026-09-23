@@ -46,6 +46,43 @@ def test_extract_raises_unavailable_when_call_fails(tmp_path, monkeypatch):
             extract("some post", "https://facebook.com/x", "group", config)
 
 
+def test_ordinary_call_failure_does_not_mark_quota_exhausted(tmp_path, monkeypatch):
+    _isolate_budget(tmp_path, monkeypatch)
+    config = LLMConfig(enabled=True, api_key="fake-key")
+    with patch("src.llm_extractor._extract_gemini", side_effect=Exception("boom")):
+        with pytest.raises(LLMUnavailable):
+            extract("some post", "https://facebook.com/x", "group", config)
+    assert llm_extractor._load_budget()["exhausted"] is False
+
+
+def test_quota_exhausted_error_marks_exhausted_for_the_rest_of_today(tmp_path, monkeypatch):
+    # Google's own free-tier quota resets at Pacific midnight, which
+    # doesn't line up with this project's local-midnight daily_budget
+    # reset — a 429 RESOURCE_EXHAUSTED response is remembered separately
+    # so every later call today skips straight to the regex fallback
+    # instead of re-hitting the same already-exhausted quota.
+    _isolate_budget(tmp_path, monkeypatch)
+    config = LLMConfig(enabled=True, api_key="fake-key", daily_budget=400)
+    quota_error = Exception("429 RESOURCE_EXHAUSTED. {'error': {'code': 429, ...}}")
+    with patch("src.llm_extractor._extract_gemini", side_effect=quota_error):
+        with pytest.raises(LLMUnavailable):
+            extract("some post", "https://facebook.com/x", "group", config)
+    assert llm_extractor._load_budget()["exhausted"] is True
+
+
+def test_extract_skips_gemini_call_once_marked_exhausted(tmp_path, monkeypatch):
+    _isolate_budget(tmp_path, monkeypatch)
+    config = LLMConfig(enabled=True, api_key="fake-key", daily_budget=400)
+    llm_extractor.BUDGET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    llm_extractor.BUDGET_PATH.write_text(
+        '{"date": "' + llm_extractor._today() + '", "count": 1, "exhausted": true}'
+    )
+    with patch("src.llm_extractor._extract_gemini") as mock_gemini:
+        with pytest.raises(LLMUnavailable):
+            extract("some post", "https://facebook.com/x", "group", config)
+        mock_gemini.assert_not_called()
+
+
 def test_extract_returns_none_for_non_offer(tmp_path, monkeypatch):
     _isolate_budget(tmp_path, monkeypatch)
     config = LLMConfig(enabled=True, api_key="fake-key")

@@ -148,6 +148,28 @@ def test_extract_price_still_none_for_a_bare_unqualified_number():
     assert _extract_price("סאבלט, 3 חדרים ברחוב הרצל 44") is None
 
 
+def test_extract_price_converts_a_weekly_rate_to_the_stay_total():
+    # This project's price convention (see listing_filters.
+    # matches_without_location's proration comment) treats a short-stay
+    # listing's price as the TOTAL for its whole period, not a per-unit
+    # rate — "1000 ש"ח לשבוע" for a 14-day stay is really 2000 total.
+    assert _extract_price("1000 ש\"ח לשבוע", duration_days=14) == 2000
+
+
+def test_extract_price_converts_a_daily_rate_to_the_stay_total():
+    assert _extract_price("150 ליום", duration_days=10) == 1500
+
+
+def test_extract_price_keeps_bare_rate_when_duration_unknown():
+    # Can't compute a total without knowing the period — best-effort
+    # fallback, same as the rest of this regex parser.
+    assert _extract_price("1000 ש\"ח לשבוע") == 1000
+
+
+def test_extract_price_per_month_phrasing_unaffected_by_rate_handling():
+    assert _extract_price("2500 לחודש", duration_days=None) == 2500
+
+
 def test_parse_listing_detects_separate_toilet_shower():
     listing = parse_listing(
         "סאבלט עם שירותים נפרדים, 3000 שקל",
@@ -296,6 +318,42 @@ def test_extract_lease_dates_reads_a_bare_start_date():
 def test_extract_lease_dates_returns_all_none_without_any_date_info():
     start, end, duration = _extract_lease_dates("סאבלט בפלורנטין, 4500 שקל")
     assert (start, end, duration) == (None, None, None)
+
+
+def test_extract_lease_dates_skips_over_a_weekday_name_before_the_date():
+    # "החל מיום שישי 25.9" — "starting from [the day] Friday, 25.9" —
+    # a common phrasing that would otherwise stop the date from being
+    # recognized at all, since it doesn't come immediately after "מ-".
+    today = date(2026, 9, 23)
+    start, end, duration = _extract_lease_dates(
+        "פנוי לסאבלט לתקופה של שבועיים החל מיום שישי 25.9", today
+    )
+    assert start == date(2026, 9, 25)
+    assert duration == 14
+
+
+def test_parse_date_token_reads_a_spelled_out_hebrew_month():
+    today = date(2026, 9, 1)
+    assert _parse_date_token("27 בספטמבר", today) == date(2026, 9, 27)
+
+
+def test_extract_lease_dates_reads_a_named_month_range():
+    today = date(2026, 9, 1)
+    start, end, duration = _extract_lease_dates(
+        "כניסה מ-27 בספטמבר עד 30 באוקטובר", today
+    )
+    assert start == date(2026, 9, 27)
+    assert end == date(2026, 10, 30)
+
+
+def test_extract_lease_dates_named_month_day_range_takes_the_earlier_day():
+    # "27-30 באוקטובר" — a day RANGE before the month name, describing a
+    # flexible end window — the earlier day is the conservative estimate.
+    today = date(2026, 9, 1)
+    start, end, duration = _extract_lease_dates(
+        "כניסה מ-1 באוקטובר עד 27-30 באוקטובר", today
+    )
+    assert end == date(2026, 10, 27)
 
 
 def test_parse_listing_populates_lease_dates():

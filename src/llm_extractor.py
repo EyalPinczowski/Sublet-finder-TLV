@@ -34,7 +34,12 @@ _SYSTEM_PROMPT = """אתה מנתח מודעות סאבלט/שכירות דיר�
 - אם שדה כלשהו אינו מופיע במפורש במודעה — החזר null. אסור לנחש או להמציא מספרים.
 - is_offer = true רק אם הפוסט *מציע* דירה/חדר/סאבלט להשכרה. false אם מדובר במישהו
   שמחפש דירה/חדר לעצמו ("מחפש/ת דירה"), או בפוסט שאינו קשור לשכירות דירות כלל.
-- price_ils = שכר הדירה החודשי הכולל (לא לחדר/לאדם) בשקלים. אם לא צוין — null.
+- price_ils = הסכום הכולל שהשוכר משלם עבור התקופה המוצעת בפוסט, בשקלים
+  (לא לחדר/לאדם). אם מדובר בשכירות רגילה, ארוכת טווח, או שלא מצוינת
+  תקופה קצרה — זהו שכר הדירה החודשי הרגיל. אם צוין תעריף ליחידת זמן
+  ("1000 לשבוע", "150 ליום") ולא סכום כולל מפורש — חשב את הסכום הכולל
+  לכל התקופה המוצעת (תעריף כפול מספר יחידות הזמן בתקופה), לא את התעריף
+  הבודד. אם לא ניתן לקבוע — null.
 - rooms = מספר החדרים הכולל בדירה (הגודל הכולל של הדירה, לא כמה פנויים).
 - available_rooms = כמה חדרים/מקומות פנויים להשכרה *כרגע* מוצעים בפוסט הזה —
   שונה מ-rooms! לדוגמה: "מתפנה חדר בדירת 3 חדרים" -> available_rooms=1,
@@ -99,9 +104,10 @@ def _load_budget() -> dict:
         with open(BUDGET_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"date": _today(), "count": 0}
+        return {"date": _today(), "count": 0, "exhausted": False}
     if data.get("date") != _today():
-        return {"date": _today(), "count": 0}
+        return {"date": _today(), "count": 0, "exhausted": False}
+    data.setdefault("exhausted", False)
     return data
 
 
@@ -113,7 +119,31 @@ def _spend_budget() -> None:
         json.dump(data, f)
 
 
+_QUOTA_EXHAUSTED_MARKER = "RESOURCE_EXHAUSTED"
+
+
+def _mark_exhausted_if_quota_error(exc: Exception) -> None:
+    """Google's real server-side free-tier quota (not this project's own
+    daily_budget counter) resets at Pacific midnight — which doesn't line
+    up with this counter's local-midnight reset, so the two can disagree:
+    a fresh local day can still land inside an already-exhausted Google
+    quota window. Once a real 429 RESOURCE_EXHAUSTED response is seen,
+    remember it for the rest of today so every remaining post in this
+    scan (and any later scan run today) skips straight to the regex
+    fallback, instead of each one separately paying _pace()'s interval
+    delay plus a network round-trip on a call already known to fail."""
+    if _QUOTA_EXHAUSTED_MARKER not in str(exc):
+        return
+    data = _load_budget()
+    data["exhausted"] = True
+    BUDGET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(BUDGET_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
 def _budget_remaining(config: LLMConfig) -> int:
+    if _load_budget().get("exhausted"):
+        return 0
     if config.daily_budget <= 0:
         return 1  # 0 = no ceiling (still gated by api_key being set)
     return config.daily_budget - _load_budget()["count"]
@@ -178,6 +208,7 @@ def extract(
     try:
         e = _extract_gemini(text, config)
     except Exception as exc:
+        _mark_exhausted_if_quota_error(exc)
         raise LLMUnavailable(str(exc)) from exc
     if not e.is_offer:
         return None

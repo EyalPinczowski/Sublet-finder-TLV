@@ -41,6 +41,20 @@ PRICE_RE = re.compile(
     r"|(?:מחיר|price)\s*[:\-]?\s*" + _PRICE_NUMBER,
     re.IGNORECASE,
 )
+# A per-week/per-day RATE ("1000 ש"ח לשבוע", "150 ליום") is a different
+# number than this project's price convention (see
+# listing_filters.matches_without_location's proration comment): a
+# short-stay listing's price is treated as the TOTAL for its whole
+# stated period, not a per-unit rate. Checked BEFORE PRICE_RE, since
+# "1000 ש"ח" in "1000 ש"ח לשבוע" would otherwise match PRICE_RE's plain
+# currency-marker branch too and silently keep the bare weekly/daily
+# number as if it were the stay's total cost.
+_PRICE_PER_WEEK_RE = re.compile(
+    _PRICE_NUMBER + r'\s*(?:₪|ש"ח|שקל|nis)?\s*(?:ל|/)\s*שבוע', re.IGNORECASE
+)
+_PRICE_PER_DAY_RE = re.compile(
+    _PRICE_NUMBER + r'\s*(?:₪|ש"ח|שקל|nis)?\s*(?:ל|/)\s*יום(?!ים)', re.IGNORECASE
+)
 # "חד(?!\w)" excludes construct-state phrases like "חדרי רחצה" (bathrooms)
 # or "חדרי שינה" (bedrooms), which aren't the total room count.
 ROOMS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:חדרים|חד(?!\w)['׳]?|rooms?\b)", re.IGNORECASE)
@@ -101,9 +115,31 @@ _DURATION_WORD_RE = re.compile(
 _DURATION_NUM_RE = re.compile(r"(\d+)\s*(ימים|יום|שבועות|שבוע|חודשים|חודש)")
 _DURATION_UNIT_DAYS = {"יום": 1, "ימים": 1, "שבוע": 7, "שבועות": 7, "חודש": 30, "חודשים": 30}
 
+_HE_MONTHS = {
+    "ינואר": 1, "פברואר": 2, "מרץ": 3, "אפריל": 4, "מאי": 5, "יוני": 6,
+    "יולי": 7, "אוגוסט": 8, "ספטמבר": 9, "אוקטובר": 10, "נובמבר": 11, "דצמבר": 12,
+}
+_HE_MONTH_ALT = "|".join(_HE_MONTHS)
 _DATE_TOKEN = r"\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?"
-_DATE_RANGE_RE = re.compile(rf"(?:מ-?)?({_DATE_TOKEN})\s*(?:-|עד|–)\s*({_DATE_TOKEN})")
-_START_DATE_RE = re.compile(rf"(?:מ-|החל מ-?|פנוי מ-?|כניסה מ-?)\s*({_DATE_TOKEN})")
+# A day (or day range, e.g. "27-30") followed by a spelled-out Hebrew month
+# name ("27 בספטמבר") — the far more common ordering than "מספטמבר 27"
+# (month before day), which isn't attempted here; the LLM path handles
+# that phrasing fine, this stays a best-effort fallback like the rest of
+# this parser. For a day RANGE before the month ("27-30 באוקטובר"), only
+# the first (earlier) day is captured, as a conservative end-date guess.
+_DATE_TOKEN_NAMED = rf"\d{{1,2}}(?:\s*-\s*\d{{1,2}})?\s*ב(?:{_HE_MONTH_ALT})"
+_DATE_TOKEN_ANY = rf"(?:{_DATE_TOKEN}|{_DATE_TOKEN_NAMED})"
+_DATE_RANGE_RE = re.compile(rf"(?:מ-?)?({_DATE_TOKEN_ANY})\s*(?:-|עד|–)\s*({_DATE_TOKEN_ANY})")
+# An optional "יום <weekday>" between the prefix and the date itself
+# ("החל מיום שישי 25.9" — "starting from [the day] Friday, 25.9") —
+# common phrasing that would otherwise stop the date token from being
+# recognized at all, since it doesn't come immediately after the prefix.
+_HE_WEEKDAY_ALT = "ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת"
+_START_DATE_RE = re.compile(
+    rf"(?:מ-|החל מ-?|פנוי מ-?|כניסה מ-?)"
+    rf"(?:יום\s*(?:{_HE_WEEKDAY_ALT})\s*,?\s*)?"
+    rf"({_DATE_TOKEN_ANY})"
+)
 
 
 def _extract_duration_days(text: str) -> int | None:
@@ -127,6 +163,18 @@ def _resolve_year(day: int, month: int, today: date) -> int:
 
 
 def _parse_date_token(token: str, today: date) -> date | None:
+    token = token.strip()
+    named_match = re.match(rf"(\d{{1,2}})(?:\s*-\s*\d{{1,2}})?\s*ב({_HE_MONTH_ALT})", token)
+    if named_match:
+        day = int(named_match.group(1))
+        month = _HE_MONTHS[named_match.group(2)]
+        if not (1 <= day <= 31):
+            return None
+        year = _resolve_year(day, month, today)
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
     parts = token.split(".") if "." in token else token.split("/")
     if len(parts) < 2:
         return None
@@ -231,7 +279,15 @@ def looks_like_explicit_apartment_seeker(text: str) -> bool:
     return bool(_EXPLICIT_APARTMENT_SEEKER_RE.search(text or ""))
 
 
-def _extract_price(text: str) -> int | None:
+def _extract_price(text: str, duration_days: int | None = None) -> int | None:
+    week_match = _PRICE_PER_WEEK_RE.search(text)
+    if week_match:
+        rate = int(week_match.group(1).replace(",", "").replace(".", ""))
+        return round(rate * duration_days / 7) if duration_days else rate
+    day_match = _PRICE_PER_DAY_RE.search(text)
+    if day_match:
+        rate = int(day_match.group(1).replace(",", "").replace(".", ""))
+        return rate * duration_days if duration_days else rate
     match = PRICE_RE.search(text)
     if not match:
         return None
@@ -298,7 +354,7 @@ def parse_listing(
         post_url=post_url,
         group_name=group_name,
         raw_text=text,
-        price=_extract_price(text),
+        price=_extract_price(text, duration_days=duration),
         rooms=_extract_rooms(text),
         neighborhoods_mentioned=_matched_neighborhoods(text, known_neighborhoods),
         roommates=_extract_roommates(text),

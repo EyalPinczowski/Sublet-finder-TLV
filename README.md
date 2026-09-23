@@ -94,6 +94,14 @@ is unset, the budget is spent, or a call fails, extraction falls back to
 `src/listing_parser.py`'s regex/keyword heuristic automatically — a run
 never hard-fails over this.
 
+Google's own server-side quota resets at Pacific midnight, which doesn't
+line up with `llm.daily_budget`'s local-midnight reset — the two can
+disagree, and a fresh local day can still land inside an already-exhausted
+Google quota window (especially on a heavy testing day). The first real
+`429 RESOURCE_EXHAUSTED` response is remembered for the rest of that day,
+so every later post skips straight to the regex fallback instead of each
+one separately re-hitting the same already-exhausted quota.
+
 ### Zone scoring
 
 `config.yaml`'s `zone:` block scores listings by straight-line distance to a
@@ -180,11 +188,20 @@ against `min_days` but not the window (nothing to check a window against
 without a start date); a post with a start date but no stated
 duration/end is checked against the window but not `min_days`.
 
+**One exception stays a hard rejection**: a post whose *only* date signal
+is an end date that's already in the past (e.g. "available until Sept 1"
+scraped on Sept 23 — a stale or reposted ad) is dropped outright, rather
+than being folded into "no date info, so pass." The post's own text says
+it's over — that's a real negative signal, not silence.
+
 **Price proration**: your `price_min`/`price_max` are a monthly budget.
 When a listing's stay is under 30 days, that budget is prorated down
 (`price * duration_days/30`) before comparing it against the post's price
 — which is treated as the **total for its stated period**, not a monthly
-rate, for a short-term post. A stay of a month or longer is never
+rate, for a short-term post. A post priced by the week or day ("1000
+ש"ח לשבוע") gets converted to that period-total automatically (rate ×
+number of weeks/days in the stay) rather than being taken as the total
+literally. A stay of a month or longer is never
 prorated *up*; ordinary monthly-rate listings are unaffected. Dates are
 extracted the same way as everything else — Gemini gets today's date in
 its prompt so it can resolve "מיידי"/bare `DD.MM`/date ranges into real

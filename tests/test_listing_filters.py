@@ -324,6 +324,28 @@ def test_resolve_dates_end_date_already_past_is_unusable():
     listing = make_listing(lease_end_date=TODAY - timedelta(days=1))
     start, duration = _resolve_dates(listing, today=TODAY)
     assert duration is None
+    # The synthetic `start = today` from the end-only branch must not
+    # leak out here — a caller checking `start is not None` would
+    # otherwise wrongly read this as a real, in-window start date (see
+    # matches_without_location's own dedicated already-passed-end-date
+    # check for how this case is actually rejected).
+    assert start is None
+
+
+def test_stay_gate_rejects_a_stated_end_date_already_in_the_past():
+    # A stale/reposted ad's own stated end date having already passed is
+    # a real rejection signal — unlike a post that just never mentions
+    # dates at all, this is NOT folded into the general soft-pass.
+    listing = make_listing(lease_end_date=TODAY - timedelta(days=10))
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is False
+
+
+def test_explain_mismatch_already_passed_end_date():
+    listing = make_listing(lease_end_date=TODAY - timedelta(days=10))
+    stay = StayConfig(min_days=14, search_window_days=21)
+    reasons = explain_mismatch(listing, SearchConfig(), stay_cfg=stay, today=TODAY)
+    assert any("already passed" in r for r in reasons)
 
 
 def test_stay_gate_matches_an_end_date_only_listing_within_the_minimum():

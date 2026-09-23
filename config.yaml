@@ -44,10 +44,10 @@ zone:
 
 # How long a stay must be, and how soon it must start — global, not
 # per-profile (this is about when you can personally move, not room count).
-# A listing needs SOME date/duration info to be considered at all (a
-# deliberate exception to this tool's usual "missing data passes" rule —
-# see README "Stay length and dates"); one with no dates mentioned is
-# dropped rather than shown as a maybe.
+# Dates are soft-optional, like most fields here — a listing with no
+# date info at all still passes; only a known-too-short stay, a known
+# start date outside the window below, or a stated end date that's
+# already passed gets dropped. See README "Stay length and dates".
 stay:
   min_days: 14
   # Only listings whose lease starts within [today, today + this] count.
