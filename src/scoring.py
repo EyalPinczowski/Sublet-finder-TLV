@@ -2,7 +2,10 @@
 first instead of an unranked list. Adapted from bgu-housing-bot's fit.py,
 but built from scratch around what this tool actually extracts — no
 floor/elevator/furnished/balcony/broker factors, since nothing here parses
-those.
+those. Bathroom count is deliberately excluded too, despite being parsed
+(`Listing.toilets`) and shown in alerts — it's a fine "does this even
+qualify" filter (see `listing_filters._bathrooms_ok`) but too noisy a
+signal to rank listings against each other by.
 
 Each factor contributes an independent, capped delta; unknown data gets a
 neutral (not zero, not full) fill so a listing missing one field is never
@@ -84,17 +87,6 @@ def _roommates_points(roommates: Optional[int], search_cfg: SearchConfig) -> tup
     return f"{roommates} roommates", round(15 * frac)
 
 
-def _bathroom_points(listing: Listing, search_cfg: SearchConfig) -> tuple[str, int]:
-    if listing.toilets is None and not listing.separate_toilet_shower:
-        return "bathrooms not listed", 5
-    min_bath = search_cfg.min_bathrooms
-    if min_bath and listing.toilets is not None and listing.toilets >= min_bath:
-        return f"{listing.toilets} bathrooms", 10
-    if listing.separate_toilet_shower:
-        return "separate toilet/shower", 6
-    return "bathrooms (meets minimum)", 0
-
-
 def _freshness_points(age_hours: Optional[float]) -> tuple[str, int]:
     if age_hours is None:
         return "age unknown", 5
@@ -122,7 +114,6 @@ def breakdown(
         _price_points(listing.price, search_cfg, duration_days),
         _rooms_points(listing.rooms, search_cfg),
         _roommates_points(listing.roommates, search_cfg),
-        _bathroom_points(listing, search_cfg),
         _freshness_points(age_hours),
     ]
     if listing.images:
