@@ -158,6 +158,22 @@ def test_send_text_gives_up_after_a_second_429(monkeypatch):
     assert mock_post.call_count == 2  # exactly one retry, never an infinite loop
 
 
+def test_send_text_drops_the_alert_instead_of_a_long_429_wait(monkeypatch):
+    """A large retry_after (during a broader Telegram rate-limit incident,
+    not just this bot's own traffic) must not block the whole scan —
+    dropping the alert is a better trade than sleeping indefinitely inside
+    run_lock()."""
+    sleep_calls = []
+    monkeypatch.setattr("src.telegram_notifier.time.sleep", lambda s: sleep_calls.append(s))
+    with patch(
+        "src.telegram_notifier._session.post",
+        return_value=_mock_response(status_code=429, retry_after=120),
+    ) as mock_post:
+        assert send_text("token", "chat", "hello") is False
+    assert mock_post.call_count == 1  # never even attempts the retry
+    assert sleep_calls == []
+
+
 def test_send_listing_plain_text_when_no_images():
     listing = make_listing(images=[])
     with patch(

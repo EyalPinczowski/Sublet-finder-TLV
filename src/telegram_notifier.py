@@ -131,6 +131,16 @@ def _retry_after_seconds(resp) -> float:
         return 1.0
 
 
+# A cap on how long the one 429 retry will actually wait. This sleep runs
+# synchronously inside cli._scan's notify loop, which holds run_lock() and
+# can have an open DB write transaction for the current group — an
+# uncapped wait (Telegram's own retry_after, during a broader rate-limit
+# incident, could plausibly be large) would stall the whole scan and
+# starve bot_listener.py's write window for that entire time. Past this
+# cap, dropping the alert is a better trade than blocking indefinitely.
+_MAX_RETRY_WAIT_SECONDS = 15
+
+
 def _post(bot_token: str, method: str, payload: dict, timeout: int) -> dict | None:
     url = f"https://api.telegram.org/bot{bot_token}/{method}"
     for attempt in range(2):  # one retry, only for a 429 — see below
@@ -143,6 +153,12 @@ def _post(bot_token: str, method: str, payload: dict, timeout: int) -> dict | No
                 # limit — retrying once rather than dropping the alert
                 # silently is worth the wait on an unattended cron box.
                 wait = _retry_after_seconds(r)
+                if wait > _MAX_RETRY_WAIT_SECONDS:
+                    print(
+                        f"[telegram_notifier] {method} rate-limited for {wait:.0f}s — "
+                        "too long to block the scan on, dropping this alert"
+                    )
+                    return None
                 print(f"[telegram_notifier] {method} rate-limited, retrying after {wait:.0f}s")
                 time.sleep(wait)
                 continue

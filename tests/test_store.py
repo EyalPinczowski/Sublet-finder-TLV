@@ -67,6 +67,26 @@ def test_content_hash_key_still_differs_for_different_rooms():
     assert a != b
 
 
+def test_content_hash_key_none_when_address_is_only_city_boilerplate():
+    """An address that's just a bare city reference (e.g. the LLM
+    extracted "תל אביב" with no street — an allowed, real case) must not
+    hash at all: normalizing it strips everything, and hashing an empty
+    string would collide every such listing together regardless of their
+    actual (unknown) address."""
+    assert store.content_hash_key(make_listing(address="תל אביב")) is None
+    assert store.content_hash_key(make_listing(address="ת\"א")) is None
+    assert store.content_hash_key(make_listing(address="רחוב תל אביב")) is None
+
+
+def test_content_hash_key_price_rounding_is_symmetric_at_the_boundary():
+    """Python's round() uses round-half-to-even, which would put 4450 and
+    4460 — a plausible same-listing repost variance — in different
+    100-ILS buckets; rounding must be symmetric instead."""
+    a = store.content_hash_key(make_listing(price=4450))
+    b = store.content_hash_key(make_listing(price=4460))
+    assert a == b
+
+
 def test_insert_and_find_by_content_hash(isolated_db):
     listing = make_listing()
     with store.connect() as conn:
@@ -226,17 +246,20 @@ def test_dismiss_hides_listing_from_default_listing(isolated_db):
         assert len(store.list_listings(conn, matched_only=True, include_dismissed=True)) == 1
 
 
-def test_effective_score_adds_save_bonus(isolated_db):
+def test_effective_scores_adds_save_bonus(isolated_db):
     listing = make_listing(score=50)
     with store.connect() as conn:
         store.insert_listing(conn, listing, matched_profiles=["default"])
-        row = store.list_listings(conn, matched_only=True)[0]
-        assert store.effective_score(conn, row) == 50
+        rows = store.list_listings(conn, matched_only=True)
+        assert store.effective_scores(conn, rows)[listing.post_url] == 50
         store.add_mark(conn, listing.post_url, "user1", "save")
-        assert store.effective_score(conn, row) == 50 + store.MARK_SCORE_DELTA
+        assert (
+            store.effective_scores(conn, rows)[listing.post_url]
+            == 50 + store.MARK_SCORE_DELTA
+        )
 
 
-def test_effective_scores_batch_matches_effective_score_per_row(isolated_db):
+def test_effective_scores_batch_computes_each_row_independently(isolated_db):
     a = make_listing(post_url="https://facebook.com/groups/1/posts/a", score=50)
     b = make_listing(post_url="https://facebook.com/groups/1/posts/b", score=70)
     with store.connect() as conn:
@@ -245,8 +268,6 @@ def test_effective_scores_batch_matches_effective_score_per_row(isolated_db):
         store.add_mark(conn, a.post_url, "user1", "save")
         rows = store.list_listings(conn, matched_only=True)
         batch = store.effective_scores(conn, rows)
-        for row in rows:
-            assert batch[row.post_url] == store.effective_score(conn, row)
         assert batch[a.post_url] == 50 + store.MARK_SCORE_DELTA
         assert batch[b.post_url] == 70
 

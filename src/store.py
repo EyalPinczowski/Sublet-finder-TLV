@@ -215,10 +215,13 @@ def _round_price_for_hash(price: int | None) -> int | None:
     tweak, or the LLM/regex extracting a slightly different figure from
     two independently-written posts of the same listing) without being
     loose enough to plausibly conflate two genuinely different
-    apartments."""
+    apartments. Uses round-half-up (not Python's round(), which rounds
+    half-to-even) so the fuzz window is symmetric around each x50
+    boundary — otherwise e.g. 4450 and 4460, an entirely plausible
+    same-listing price variance, could land in different 100-ILS buckets."""
     if price is None:
         return None
-    return round(price / 100) * 100
+    return int(price / 100 + 0.5) * 100
 
 
 def content_hash_key(listing) -> str | None:
@@ -235,10 +238,15 @@ def content_hash_key(listing) -> str | None:
     re-extracted byte-for-byte identically — still hashes the same."""
     if not listing.address:
         return None
-    basis = (
-        f"{_normalize_address_for_hash(listing.address)}|"
-        f"{_round_price_for_hash(listing.price)}|{listing.rooms}"
-    )
+    normalized = _normalize_address_for_hash(listing.address)
+    if not normalized:
+        # The whole address was city-name/street-prefix boilerplate (e.g.
+        # the LLM extracted just "תל אביב" with no street — a real,
+        # allowed case, see llm_extractor.py's prompt) — hashing an empty
+        # string would collide every such listing together regardless of
+        # actual address, which is worse than not deduping at all.
+        return None
+    basis = f"{normalized}|{_round_price_for_hash(listing.price)}|{listing.rooms}"
     return "hash:" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
 
 
@@ -431,21 +439,14 @@ def _save_counts(conn) -> dict[str, int]:
     return {row["post_url"]: row["n"] for row in rows}
 
 
-def effective_score(conn, row: ListingRow) -> int:
-    """The stored fit score plus MARK_SCORE_DELTA per ⭐ save — intentionally
-    uncapped past 100, so a well-endorsed listing can read above 100 rather
-    than being swallowed by the ceiling (mirrors bgu's approach). For a
-    single listing (e.g. right after inserting or voting on it); a caller
-    scoring/sorting a whole list_listings() result should use
-    effective_scores() instead — one query total rather than one per row."""
-    base = row.score or 0
-    return base + save_count(conn, row.post_url) * MARK_SCORE_DELTA
-
-
 def effective_scores(conn, rows: list[ListingRow]) -> dict[str, int]:
-    """effective_score() for a whole list of rows in one batch query
-    (keyed by post_url) instead of one save_count() query per row —
-    use this for sorting/displaying a list_listings() result."""
+    """The stored fit score plus MARK_SCORE_DELTA per ⭐ save, for a whole
+    list of rows in one batch query (keyed by post_url) — intentionally
+    uncapped past 100, so a well-endorsed listing can read above 100
+    rather than being swallowed by the ceiling (mirrors bgu's approach).
+    Use this for sorting/displaying a list_listings() result; every
+    production caller (cli.cmd_matches, dashboard.py, publish.py) goes
+    through this batch form rather than one save_count() query per row."""
     counts = _save_counts(conn)
     return {
         row.post_url: (row.score or 0) + counts.get(row.post_url, 0) * MARK_SCORE_DELTA

@@ -284,7 +284,38 @@ def test_cmd_scan_does_not_exit_when_not_blocked(isolated_db, monkeypatch, tmp_p
 
 def test_prune_dead_links_noop_when_no_matched_listings(isolated_db):
     with store.connect() as conn:
-        cli._prune_dead_links(MagicMock(), conn)  # must not raise
+        assert cli._prune_dead_links(MagicMock(), conn) is True  # nothing to do isn't a failure
+
+
+def test_prune_dead_links_returns_false_when_the_page_cant_even_open(isolated_db):
+    listing = Listing(
+        post_url="https://facebook.com/groups/1/posts/1",
+        group_name="g1",
+        raw_text="t",
+        score=80,
+    )
+    context = MagicMock()
+    context.new_page.side_effect = Exception("browser context is dead")
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        assert cli._prune_dead_links(context, conn) is False
+
+
+def test_prune_dead_links_returns_true_despite_a_single_url_failing(isolated_db):
+    """A per-URL failure (network hiccup, selector churn) is still
+    best-effort and swallowed — the pass as a whole still "completed"."""
+    listing = Listing(
+        post_url="https://facebook.com/groups/1/posts/1",
+        group_name="g1",
+        raw_text="t",
+        score=80,
+    )
+    context = MagicMock()
+    context.new_page.return_value.goto.side_effect = Exception("timed out")
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        assert cli._prune_dead_links(context, conn) is True
+        context.new_page.return_value.close.assert_called_once()
 
 
 # --- dead-link pruning: throttled to roughly once a day ---
@@ -328,12 +359,30 @@ def test_scan_prunes_and_records_when_due(isolated_db, monkeypatch):
     monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
 
     prune_calls = []
-    monkeypatch.setattr(
-        cli, "_prune_dead_links", lambda context, conn: prune_calls.append(1)
-    )
+
+    def fake_prune(context, conn):
+        prune_calls.append(1)
+        return True
+
+    monkeypatch.setattr(cli, "_prune_dead_links", fake_prune)
     cli._scan(make_config(), _Args())
     assert prune_calls == [1]
     assert scan_state.load_last_dead_link_prune_at() is not None
+
+
+def test_scan_does_not_record_prune_completion_on_total_failure(isolated_db, monkeypatch):
+    """A total pruning failure (e.g. the browser context couldn't open a
+    page) must not advance the once-a-day throttle — that would silently
+    disable retries for up to 24h even though nothing was actually
+    checked."""
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([], True))
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: False)
+
+    cli._scan(make_config(), _Args())
+    assert scan_state.load_last_dead_link_prune_at() is None
 
 
 def test_scan_never_prunes_on_dry_run_even_when_due(isolated_db, monkeypatch):

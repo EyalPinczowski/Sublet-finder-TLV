@@ -31,7 +31,7 @@ def _card(row, score: int) -> str:
     images = row.image_urls()
     img_html = f'<img src="{html.escape(images[0])}">' if images else ""
     post_link = (
-        f'<a href="{html.escape(row.post_url)}">View post</a>'
+        f'<a href="{html.escape(row.post_url)}" target="_blank" rel="noreferrer">View post</a>'
         if row.post_url.startswith("http")
         else ""
     )

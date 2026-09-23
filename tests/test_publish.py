@@ -54,6 +54,17 @@ def test_render_snapshot_is_noindex(isolated_db):
     assert 'name="robots" content="noindex"' in snapshot
 
 
+def test_render_snapshot_post_link_carries_noreferrer(isolated_db):
+    """This page is reachable by anyone with the URL (see publish.py's own
+    docstring) — its outbound post links shouldn't leak that URL to
+    facebook.com via Referer on every click, matching dashboard.py's same
+    hardening."""
+    with store.connect() as conn:
+        _seed(conn)
+        snapshot = publish.render_snapshot(conn)
+    assert 'target="_blank" rel="noreferrer"' in snapshot
+
+
 def test_publish_skips_when_site_repo_url_unset(monkeypatch, capsys):
     monkeypatch.delenv("SITE_REPO_URL", raising=False)
     publish.publish()

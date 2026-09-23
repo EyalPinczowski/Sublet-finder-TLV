@@ -161,35 +161,46 @@ def _dead_link_prune_due() -> bool:
     return last is None or datetime.now(timezone.utc) - last >= _DEAD_LINK_PRUNE_INTERVAL
 
 
-def _prune_dead_links(context, conn) -> None:
+def _prune_dead_links(context, conn) -> bool:
     """Best-effort: revisit a capped batch of the most-recently-matched
     listings and mark any Facebook now shows a "content isn't available"
     placeholder for as dead, so a rented-out apartment stops cluttering
     matches/dashboard instead of sitting there indefinitely. Uses the
     scan's already-open shared context (see browser.open_scan_session)
-    rather than its own browser session. Any failure here (network
-    hiccup, selector churn) is swallowed — this is a nice-to-have, never
-    worth failing or blocking the scan over."""
+    rather than its own browser session. A single URL failing (network
+    hiccup, selector churn) is swallowed and skipped — never worth
+    blocking the scan over.
+
+    Returns True if the pass actually ran (even if every individual URL
+    failed) or there was nothing to check, False only on a total failure
+    (e.g. the page itself couldn't open) — the caller uses this to decide
+    whether to advance the once-a-day throttle. Recording "pruned today"
+    after a total failure would silently disable retries for up to 24h
+    even though nothing was actually checked."""
     urls = store.recent_matched_http_urls(conn, _DEAD_LINK_CHECK_LIMIT)
     if not urls:
-        return
+        return True
     try:
         page = context.new_page()
-        try:
-            for url in urls:
-                try:
-                    page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                    time.sleep(random.uniform(1.0, 2.5))
-                    body_text = page.locator("body").inner_text(timeout=2000).lower()
-                except Exception:
-                    continue
-                if any(marker in body_text for marker in _DEAD_LINK_MARKERS):
-                    store.mark_listing_dead(conn, url)
-                    console.print(f"[yellow]Pruned dead listing:[/] {url}")
-        finally:
-            page.close()
     except Exception:
-        pass
+        return False
+    completed = True
+    try:
+        for url in urls:
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                time.sleep(random.uniform(1.0, 2.5))
+                body_text = page.locator("body").inner_text(timeout=2000).lower()
+            except Exception:
+                continue
+            if any(marker in body_text for marker in _DEAD_LINK_MARKERS):
+                store.mark_listing_dead(conn, url)
+                console.print(f"[yellow]Pruned dead listing:[/] {url}")
+    except Exception:
+        completed = False
+    finally:
+        page.close()
+    return completed
 
 
 def _scan(config: Config, args) -> bool:
@@ -203,8 +214,7 @@ def _scan(config: Config, args) -> bool:
     new_match_count = 0
     empty_group_count = 0
     with store.connect() as conn, open_scan_session(headless=not args.headed) as context:
-        if not args.dry_run and _dead_link_prune_due():
-            _prune_dead_links(context, conn)
+        if not args.dry_run and _dead_link_prune_due() and _prune_dead_links(context, conn):
             scan_state.record_dead_link_prune_completed()
         for i, group in enumerate(groups):
             if i > 0:
