@@ -86,13 +86,26 @@ def test_roommates_fewer_scores_higher():
     assert two_pts > three_pts
 
 
-def test_bathrooms_above_minimum_scores_higher_than_meeting_it():
+def test_bathrooms_exactly_at_minimum_scores_the_same_bonus_as_above_it():
+    """Regression test: _bathroom_points used to use `>` here while the
+    actual match filter (_bathrooms_ok) uses `>=` — a listing with
+    exactly min_bathrooms toilets passed the filter but scored as if
+    bathrooms were unknown (0 points) instead of getting the same 10-point
+    bonus a listing one bathroom over gets. Both should score 10: the
+    filter already treats "meets or exceeds" as equally passing."""
     search = SearchConfig(min_bathrooms=2)
     plenty = make_listing(toilets=3)
     exact = make_listing(toilets=2, separate_toilet_shower=False)
     plenty_pts = factor(breakdown(plenty, search), "3 bathrooms")
-    exact_pts = factor(breakdown(exact, search), "bathrooms (meets minimum)")
-    assert plenty_pts > exact_pts
+    exact_pts = factor(breakdown(exact, search), "2 bathrooms")
+    assert plenty_pts == exact_pts == 10
+
+
+def test_bathrooms_below_minimum_falls_back_to_meets_minimum_label():
+    search = SearchConfig(min_bathrooms=3)
+    below = make_listing(toilets=2, roommates=2, separate_toilet_shower=False)
+    pts = factor(breakdown(below, search), "bathrooms (meets minimum)")
+    assert pts == 0
 
 
 def test_freshness_newer_scores_higher():

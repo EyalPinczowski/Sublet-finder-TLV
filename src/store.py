@@ -129,7 +129,12 @@ def _ensure_schema_upgrades(conn) -> None:
 @contextmanager
 def connect():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    # A longer busy timeout than sqlite3's 5s default — a scan can hold a
+    # write transaction open for a while (see cli.py's per-group commits,
+    # which shrink but don't eliminate that window), and bot_listener.py's
+    # concurrent vote-button writes need real room to wait their turn
+    # rather than hitting "database is locked" and silently dropping a tap.
+    conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript(SCHEMA)

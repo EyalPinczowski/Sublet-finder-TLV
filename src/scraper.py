@@ -4,15 +4,15 @@ import hashlib
 import os
 import random
 import re
+import signal
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page
 
-from .browser import open_authenticated_context
 from .config import FacebookGroup
 
 # Facebook's markup uses randomized class names and changes often, so we lean
@@ -281,7 +281,7 @@ def _extract_one_post(article) -> RawPost | None:
 
 
 def _scroll_and_extract(
-    page: Page, limit: int, cutoff: datetime | None, max_scrolls: int = 15
+    page: Page, group_name: str, limit: int, cutoff: datetime | None, max_scrolls: int = 15
 ) -> list[RawPost]:
     """Scrolls and extracts together (rather than scroll-then-extract) so
     the cutoff-stop decision can see timestamps as they're discovered.
@@ -292,12 +292,23 @@ def _scroll_and_extract(
     entirely (pure count-based legacy behavior). A post with
     posted_at=None (unparseable timestamp) never counts toward the
     consecutive-old counter and is never itself a stop reason — unknown
-    age means "keep going", never "old enough to stop"."""
+    age means "keep going", never "old enough to stop".
+
+    Also re-checks for a checkpoint/login wall at the top of every scroll
+    iteration, not just once before scrolling starts — a checkpoint can be
+    served mid-session (scrolling/interaction is itself a plausible
+    trigger), and without this the loop would just keep scrolling a
+    checkpoint page and quietly report a low/zero post count instead of
+    raising ScraperBlocked."""
     seen_urls: set[str] = set()
     results: list[RawPost] = []
     examined = 0  # DOM articles already turned into a result-or-skip
     consecutive_old = 0
     for _ in range(max_scrolls):
+        reason = _blocked_reason(page)
+        if reason:
+            _save_checkpoint_snapshot(group_name, page)
+            raise ScraperBlocked(f"{group_name}: {reason}")
         articles = page.locator('[role="article"]')
         count = articles.count()
         for i in range(examined, min(count, limit)):
@@ -328,23 +339,25 @@ def jitter_between_groups() -> None:
 
 
 def scrape_group(
-    group: FacebookGroup, limit: int, cutoff: datetime | None = None, headless: bool = True
+    context, group: FacebookGroup, limit: int, cutoff: datetime | None = None
 ) -> list[RawPost]:
-    with sync_playwright() as p:
-        context = open_authenticated_context(p, headless=headless)
-        page = context.new_page()
+    """Scrapes one group using an already-open, already-authenticated
+    context (see browser.open_scan_session) — the caller owns the
+    browser/context lifecycle across the whole scan; this just opens and
+    closes its own page within it."""
+    page = context.new_page()
+    try:
         page.goto(group.url, wait_until="domcontentloaded")
         _jitter(_POST_LOAD_DELAY)
         reason = _blocked_reason(page)
         if reason:
             _save_checkpoint_snapshot(group.name, page)
-            context.close()
             raise ScraperBlocked(f"{group.name}: {reason}")
         sorted_chronologically = _force_chronological_sort(page)
         effective_cutoff = cutoff if sorted_chronologically else None
-        posts = _scroll_and_extract(page, limit=limit, cutoff=effective_cutoff)
-        context.close()
-        return posts
+        return _scroll_and_extract(page, group.name, limit=limit, cutoff=effective_cutoff)
+    finally:
+        page.close()
 
 
 # --- run lock: stop two scans from sharing the Playwright profile at once ---
@@ -366,21 +379,64 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+_STALE_LOCK_MAX_AGE_SECONDS = 30 * 60  # well past any real scan
+
+
+def _kill_if_alive(pid: int) -> None:
+    """SIGTERM, then SIGKILL if it hasn't exited after a few seconds —
+    used only on a lock old enough to be considered wedged (see
+    run_lock), never on a lock that's merely still legitimately running."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    for _ in range(10):
+        if not _pid_alive(pid):
+            return
+        time.sleep(0.5)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 @contextmanager
 def run_lock():
     """Refuse to start a second concurrent scan — two Playwright instances
-    sharing the same persistent Chromium profile can corrupt it. A lock file
-    left behind by a process that's no longer running (crash, kill -9) is
-    detected via a PID liveness check and reclaimed automatically."""
+    sharing the same persistent Chromium profile can corrupt it. Uses
+    atomic O_CREAT|O_EXCL file creation (not a separate exists()-then-
+    write()) so two near-simultaneous invocations can't both observe "no
+    lock" and both proceed. A lock file left behind by a process that's no
+    longer running (crash, kill -9) is detected via a PID liveness check
+    and reclaimed automatically; a lock whose PID is still alive but is
+    older than _STALE_LOCK_MAX_AGE_SECONDS is assumed wedged (not
+    legitimately still running — no real scan takes that long) and its
+    process is terminated before the lock is reclaimed, since leaving it
+    alive would risk two Playwright instances sharing the same profile
+    concurrently, exactly what this lock exists to prevent."""
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if LOCK_PATH.exists():
+    while True:
         try:
-            pid = int(LOCK_PATH.read_text().strip())
-        except ValueError:
-            pid = None
-        if pid is not None and _pid_alive(pid):
-            raise ScanAlreadyRunning(f"a scan is already running (pid {pid})")
-    LOCK_PATH.write_text(str(os.getpid()))
+            fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                pid = int(LOCK_PATH.read_text().strip())
+            except (ValueError, FileNotFoundError):
+                pid = None
+            if pid is not None and _pid_alive(pid):
+                age = time.time() - LOCK_PATH.stat().st_mtime
+                if age < _STALE_LOCK_MAX_AGE_SECONDS:
+                    raise ScanAlreadyRunning(f"a scan is already running (pid {pid})")
+                _kill_if_alive(pid)
+            try:
+                LOCK_PATH.unlink()
+            except FileNotFoundError:
+                pass
+            continue
+        else:
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            break
     try:
         yield
     finally:

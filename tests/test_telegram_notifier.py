@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from src.config import SearchConfig
 from src.listing_models import Listing
-from src.telegram_notifier import format_alert, send_listing
+from src.telegram_notifier import format_alert, send_listing, send_text
 
 
 def make_listing(**overrides) -> Listing:
@@ -104,6 +104,21 @@ def _mock_response(ok=True):
     resp.raise_for_status.return_value = None
     resp.json.return_value = {"ok": ok}
     return resp
+
+
+def test_send_text_returns_true_on_ok():
+    with patch("src.telegram_notifier._session.post", return_value=_mock_response(True)):
+        assert send_text("token", "chat", "hello") is True
+
+
+def test_send_text_returns_false_when_not_ok():
+    with patch("src.telegram_notifier._session.post", return_value=_mock_response(False)):
+        assert send_text("token", "chat", "hello") is False
+
+
+def test_send_text_returns_false_on_request_failure():
+    with patch("src.telegram_notifier._session.post", side_effect=Exception("network down")):
+        assert send_text("token", "chat", "hello") is False
 
 
 def test_send_listing_plain_text_when_no_images():

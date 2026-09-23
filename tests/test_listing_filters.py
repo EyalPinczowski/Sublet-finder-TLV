@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from src.config import SearchConfig, StayConfig, ZoneConfig
-from src.listing_filters import _resolve_dates, matches
+from src.listing_filters import _resolve_dates, location_ok, matches, matches_without_location
 from src.listing_models import Listing
 
 
@@ -60,10 +60,86 @@ def test_neighborhood_filter_passes_with_match():
     assert matches(listing, cfg) is True
 
 
+def test_matches_without_location_ignores_neighborhoods():
+    """The whole point of the split: a listing that fails every
+    neighborhood/zone check still passes the location-free phase, so
+    cli.py can decide whether it's worth geocoding at all."""
+    listing = make_listing(neighborhoods_mentioned=[])
+    cfg = SearchConfig(neighborhoods=["florentin", "rothschild"])
+    assert matches_without_location(listing, cfg) is True
+    assert matches(listing, cfg) is False  # the full check still rejects it
+
+
+def test_location_ok_no_neighborhoods_configured_passes():
+    listing = make_listing(neighborhoods_mentioned=[])
+    assert location_ok(listing, SearchConfig(), zone_cfg=None) is True
+
+
+def test_location_ok_requires_a_match_or_zone_hit():
+    listing = make_listing(neighborhoods_mentioned=[])
+    cfg = SearchConfig(neighborhoods=["florentin"])
+    assert location_ok(listing, cfg, zone_cfg=None) is False
+
+
+def test_location_ok_passes_with_neighborhood_match():
+    listing = make_listing(neighborhoods_mentioned=["florentin"])
+    cfg = SearchConfig(neighborhoods=["florentin"])
+    assert location_ok(listing, cfg, zone_cfg=None) is True
+
+
+def test_matches_composes_both_phases():
+    """Regression net for the matches()/matches_without_location()/
+    location_ok() split: matches() must still equal the AND of both."""
+    listing = make_listing(price=4500, neighborhoods_mentioned=["florentin"])
+    cfg = SearchConfig(price_max=5000, neighborhoods=["florentin"])
+    assert matches(listing, cfg) == (
+        matches_without_location(listing, cfg) and location_ok(listing, cfg, None)
+    )
+    listing2 = make_listing(price=9000, neighborhoods_mentioned=["florentin"])
+    assert matches(listing2, cfg) == (
+        matches_without_location(listing2, cfg) and location_ok(listing2, cfg, None)
+    )
+
+
 def test_excluded_keyword_filters_out_listing():
     listing = make_listing(raw_text="sublet in florentin, roommates wanted")
     cfg = SearchConfig(excluded_keywords=["roommates wanted"])
     assert matches(listing, cfg) is False
+
+
+def test_broker_mention_filters_out_listing():
+    listing = make_listing(raw_text="דירה להשכרה בפלורנטין, לפרטים נא לפנות למתווך")
+    assert matches(listing, SearchConfig()) is False
+
+
+def test_broker_mention_variant_metavech_filters_out_listing():
+    listing = make_listing(raw_text="הדירה מתווכת, נא לפנות")
+    assert matches(listing, SearchConfig()) is False
+
+
+def test_no_broker_fee_is_not_filtered_out():
+    listing = make_listing(raw_text="דירה להשכרה בפלורנטין ללא תיווך")
+    assert matches(listing, SearchConfig()) is True
+
+
+def test_no_broker_fee_variant_bli_is_not_filtered_out():
+    listing = make_listing(raw_text="דירה להשכרה בפלורנטין בלי תיווך")
+    assert matches(listing, SearchConfig()) is True
+
+
+def test_no_broker_fee_variant_ein_is_not_filtered_out():
+    listing = make_listing(raw_text="דירה להשכרה בפלורנטין אין תיווך")
+    assert matches(listing, SearchConfig()) is True
+
+
+def test_negated_and_real_broker_mention_still_filters_out():
+    listing = make_listing(raw_text="ללא תיווך לדירה זו, אך תיווך בלעדי לדירה הבאה")
+    assert matches(listing, SearchConfig()) is False
+
+
+def test_no_broker_terms_at_all_is_unaffected():
+    listing = make_listing(raw_text="sublet in florentin, 4500 nis")
+    assert matches(listing, SearchConfig()) is True
 
 
 def test_rejects_over_max_roommates():

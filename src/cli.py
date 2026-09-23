@@ -6,14 +6,22 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from playwright.sync_api import sync_playwright
 from rich.console import Console
 from rich.panel import Panel
 
-from . import geocode, llm_extractor, scan_state, scoring, sheets, store, telegram_notifier, zones
-from .browser import login_and_save_session, open_authenticated_context
+from . import (
+    geocode,
+    listing_filters,
+    llm_extractor,
+    scan_state,
+    scoring,
+    sheets,
+    store,
+    telegram_notifier,
+    zones,
+)
+from .browser import login_and_save_session, open_scan_session
 from .config import Config, load_config
-from .listing_filters import matches as matches_search
 from .listing_models import Listing
 from .listing_parser import is_offer_listing, parse_listing
 from .scraper import (
@@ -54,8 +62,12 @@ def _extract_listing(post: RawPost, group_name: str, config: Config) -> Listing 
                 known_neighborhoods=config.all_neighborhoods,
                 images=post.images,
             )
-        except llm_extractor.LLMUnavailable:
-            pass  # fall through to the regex parser below
+        except llm_extractor.LLMUnavailable as exc:
+            # Only reachable when config.llm.active was already True, so
+            # this never fires just because the feature is unconfigured —
+            # only for a genuine budget-exhaustion or call-failure
+            # fallback, worth seeing rather than silently degrading.
+            console.print(f"[yellow]LLM extraction unavailable ({exc}) — using regex fallback[/]")
 
     if not is_offer_listing(post.text):
         return None
@@ -85,11 +97,28 @@ def cmd_scan(args) -> None:
     except ScanAlreadyRunning as exc:
         console.print(f"[red]{exc}[/]")
         sys.exit(1)
+    except Exception as exc:
+        # A genuinely uncaught exception never reaches either of _scan()'s
+        # own heartbeat calls (it propagates straight out), so it gets its
+        # own — additive visibility, not error handling, hence the raise.
+        _send_heartbeat(config, args, f"🔴 Scan crashed: {exc}")
+        raise
     if blocked:
         # Exit code 2 = "blocked/session expired", distinct from a crash
         # (any other non-zero code) or success (0) — lets a cron log show
         # at a glance whether re-running python -m src.cli login is needed.
         sys.exit(2)
+
+
+def _send_heartbeat(config: Config, args, message: str) -> None:
+    """Best-effort Telegram ping at the end of every scan — success,
+    blocked, or crashed — so an unattended cron run's outcome is visible
+    on the channel you're already watching instead of only in
+    data/scan.log. Skipped for --dry-run (a manual/testing invocation,
+    same spirit as dry-run already skipping DB writes and match alerts)."""
+    if args.dry_run or not config.telegram:
+        return
+    telegram_notifier.send_text(config.telegram.bot_token, config.telegram.chat_id, message)
 
 
 def _compute_cutoff(config: Config) -> datetime:
@@ -105,20 +134,21 @@ def _compute_cutoff(config: Config) -> datetime:
     return max(last, floor)
 
 
-def _prune_dead_links(conn, headless: bool) -> None:
+def _prune_dead_links(context, conn) -> None:
     """Best-effort: revisit a capped batch of the most-recently-matched
     listings and mark any Facebook now shows a "content isn't available"
     placeholder for as dead, so a rented-out apartment stops cluttering
-    matches/dashboard instead of sitting there indefinitely. Any failure
-    here (network hiccup, selector churn) is swallowed — this is a
-    nice-to-have, never worth failing or blocking the scan over."""
+    matches/dashboard instead of sitting there indefinitely. Uses the
+    scan's already-open shared context (see browser.open_scan_session)
+    rather than its own browser session. Any failure here (network
+    hiccup, selector churn) is swallowed — this is a nice-to-have, never
+    worth failing or blocking the scan over."""
     urls = store.recent_matched_http_urls(conn, _DEAD_LINK_CHECK_LIMIT)
     if not urls:
         return
     try:
-        with sync_playwright() as p:
-            context = open_authenticated_context(p, headless=headless)
-            page = context.new_page()
+        page = context.new_page()
+        try:
             for url in urls:
                 try:
                     page.goto(url, wait_until="domcontentloaded", timeout=15000)
@@ -129,7 +159,8 @@ def _prune_dead_links(conn, headless: bool) -> None:
                 if any(marker in body_text for marker in _DEAD_LINK_MARKERS):
                     store.mark_listing_dead(conn, url)
                     console.print(f"[yellow]Pruned dead listing:[/] {url}")
-            context.close()
+        finally:
+            page.close()
     except Exception:
         pass
 
@@ -142,21 +173,31 @@ def _scan(config: Config, args) -> bool:
     cutoff = _compute_cutoff(config)
     groups = list(config.facebook_groups)
     random.shuffle(groups)  # don't scan in the same fixed order every run
-    with store.connect() as conn:
+    new_match_count = 0
+    with store.connect() as conn, open_scan_session(headless=not args.headed) as context:
         if not args.dry_run:
-            _prune_dead_links(conn, headless=not args.headed)
+            _prune_dead_links(context, conn)
         for i, group in enumerate(groups):
             if i > 0:
                 jitter_between_groups()
             console.rule(f"Scanning {group.name}")
             try:
-                posts = scrape_group(
-                    group, limit=config.posts_per_group, cutoff=cutoff, headless=not args.headed
-                )
+                posts = scrape_group(context, group, limit=config.posts_per_group, cutoff=cutoff)
             except ScraperBlocked as exc:
                 console.print(f"[red]Blocked by Facebook:[/] {exc}")
                 console.print("[red]Stopping this scan — check your session/login.[/]")
+                _send_heartbeat(
+                    config,
+                    args,
+                    f"🔴 Scan blocked by Facebook ({group.name}) — "
+                    "session likely expired, re-login needed.",
+                )
                 return True
+            except Exception as exc:
+                console.print(
+                    f"[red]Unexpected error scanning {group.name}, skipping this group:[/] {exc}"
+                )
+                continue
             console.print(f"Fetched {len(posts)} posts")
 
             for post in posts:
@@ -177,6 +218,17 @@ def _scan(config: Config, args) -> bool:
                 if dup_phone_url and dup_phone_url != listing.post_url:
                     continue  # same phone+price+rooms — likely a reworded repost
 
+                # Cheap filters first (price/rooms/excluded-keywords/broker/
+                # etc.), before geocoding — a listing that was always going
+                # to fail one of these never pays for a rate-limited lookup.
+                candidate_profiles = [
+                    p
+                    for p in config.searches
+                    if listing_filters.matches_without_location(listing, p, config.stay)
+                ]
+                if not candidate_profiles:
+                    continue
+
                 _geocode_listing(listing, config)
 
                 age_hours = (
@@ -185,15 +237,14 @@ def _scan(config: Config, args) -> bool:
                     else None
                 )
 
-                # Evaluate this one extraction against every configured
-                # profile — a listing can match more than one (e.g. it
-                # could satisfy both "single room" and "two rooms" if your
+                # A listing can match more than one profile (e.g. it could
+                # satisfy both "single room" and "two rooms" if your
                 # profiles' ranges overlap), each scored on that profile's
                 # own criteria (different price ranges score differently).
                 matched_profiles = [
                     p
-                    for p in config.searches
-                    if matches_search(listing, p, config.zone, config.stay)
+                    for p in candidate_profiles
+                    if listing_filters.location_ok(listing, p, config.zone)
                 ]
                 scores = {
                     p.name: scoring.score(listing, p, config.zone, age_hours)
@@ -222,6 +273,7 @@ def _scan(config: Config, args) -> bool:
                     continue  # INSERT OR IGNORE hit a duplicate race
                 if not matched_profiles:
                     continue
+                new_match_count += 1
 
                 for p in matched_profiles:
                     console.print(
@@ -247,12 +299,20 @@ def _scan(config: Config, args) -> bool:
                     if any_sent:
                         store.mark_listing_notified(conn, listing_id)
 
+            # Shrinks the write-lock window from "the whole scan" to
+            # roughly one group's worth of posts, giving bot_listener.py's
+            # concurrent vote-button writes frequent gaps to get in rather
+            # than waiting out one long-lived multi-minute transaction.
+            conn.commit()
+
     # Only reached if every group's scrape_group() completed cleanly (no
     # ScraperBlocked) — the early `return True` above skips this, so a
     # blocked run doesn't advance the watermark and the next run safely
     # re-covers that time range (cheap: dedup already makes it a no-op for
     # anything already stored).
     scan_state.record_scan_completed()
+    word = "match" if new_match_count == 1 else "matches"
+    _send_heartbeat(config, args, f"✅ Scan complete — {new_match_count} new {word}.")
     console.print("\nRun `python scripts/matches.py` to see everything found so far.")
     return False
 

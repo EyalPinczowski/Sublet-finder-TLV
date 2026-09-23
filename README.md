@@ -227,16 +227,21 @@ crontab -e
 ```
 Add:
 ```
-0 8 * * *  cd /path/to/Sublet-finder-TLV && .venv/bin/python -m src.cli scan >> data/scan.log 2>&1
-0 20 * * * cd /path/to/Sublet-finder-TLV && .venv/bin/python -m src.cli scan >> data/scan.log 2>&1
+0 7 * * *  sleep $(python3 -c "import random; print(random.randint(0, 7200))") && cd /path/to/Sublet-finder-TLV && .venv/bin/python -m src.cli scan >> data/scan.log 2>&1
+0 19 * * * sleep $(python3 -c "import random; print(random.randint(0, 7200))") && cd /path/to/Sublet-finder-TLV && .venv/bin/python -m src.cli scan >> data/scan.log 2>&1
 ```
-Then `service cron start`. A few things worth knowing on Termux
-specifically: confirm the chroot's timezone first (`date`) so `0 8`/`0 20`
-line up with your actual local time; cron here only runs while Termux
-itself is alive (force-closing the app or rebooting the device stops it
-until you reopen Termux and run `service cron start` again); and Android's
-battery optimization can pause Termux in the background regardless — set
-it to "Unrestricted" for reliable scheduled runs.
+`0 7`/`0 19` is the fixed cron trigger; the `sleep` picks a fresh random
+0-2h delay each firing, so the actual scan start lands uniformly between
+7-9am and 7-9pm instead of the exact same clock minute every day — a
+smaller automation fingerprint at no extra request cost, since it's still
+the same two scans a day, just at a jittered time. Then `service cron
+start`. A few things worth knowing on Termux specifically: confirm the
+chroot's timezone first (`date`) so `0 7`/`0 19` line up with your actual
+local time; cron here only runs while Termux itself is alive
+(force-closing the app or rebooting the device stops it until you reopen
+Termux and run `service cron start` again); and Android's battery
+optimization can pause Termux in the background regardless — set it to
+"Unrestricted" for reliable scheduled runs.
 
 **Exit codes**, so a cron log (or `echo $?`) tells you what happened
 without reading the full output: `0` = ran cleanly, `2` = Facebook showed a
@@ -244,6 +249,14 @@ checkpoint/login wall mid-scan (your saved session likely expired — a
 debug screenshot is saved to `data/checkpoint_<group name>.png`, and
 `python -m src.cli login` or the headless-login trick needs to be redone),
 any other non-zero code = a genuine bug, not a session problem.
+
+**Telegram heartbeat**: if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are
+configured, every scan (outside of `--dry-run`) ends with a short Telegram
+message — ✅ success with the new-match count, 🔴 blocked (session likely
+expired), or 🔴 crashed — so an unattended cron run's outcome shows up on
+the channel you're already watching instead of only in `data/scan.log`.
+It also doubles as a check that cron itself ran at all: if the expected
+message doesn't show up by ~9am/9pm, that silence is the signal.
 
 ### Dead-link pruning
 
@@ -383,3 +396,9 @@ Nominatim, or Google Sheets calls, and they never touch `data/listings.db`
   in ways its regexes don't cover. Tune a profile's `excluded_keywords` to
   cut down on noise, or set `GEMINI_API_KEY` for meaningfully better
   extraction across the board.
+- **Broker/agency posts are filtered out automatically** — any mention of
+  "תיווך"/"מתווך" drops a post, unless it's negated ("ללא תיווך"/"בלי
+  תיווך"/"אין תיווך", i.e. "no broker fee") which is the opposite signal, a
+  direct-from-tenant post advertising that it's *not* brokered. This is a
+  fixed rule, not a per-profile `excluded_keywords` entry, since it needs
+  the negation handling to avoid dropping exactly the listings you want.

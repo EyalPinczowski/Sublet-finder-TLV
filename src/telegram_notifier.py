@@ -117,6 +117,14 @@ def _alert_keyboard(conn, post_url: str) -> dict | None:
     }
 
 
+def send_text(bot_token: str, chat_id: str, text: str) -> bool:
+    """A plain text message with no photo/keyboard — used for the scan
+    heartbeat (see cli.py) and anywhere else that just needs a line of
+    text sent to the chat."""
+    resp = _post(bot_token, "sendMessage", {"chat_id": chat_id, "text": text}, 15)
+    return bool(resp and resp.get("ok"))
+
+
 def _post(bot_token: str, method: str, payload: dict, timeout: int) -> dict | None:
     try:
         r = _session.post(

@@ -88,7 +88,7 @@ def _bathroom_points(listing: Listing, search_cfg: SearchConfig) -> tuple[str, i
     if listing.toilets is None and not listing.separate_toilet_shower:
         return "bathrooms not listed", 5
     min_bath = search_cfg.min_bathrooms
-    if min_bath and listing.toilets is not None and listing.toilets > min_bath:
+    if min_bath and listing.toilets is not None and listing.toilets >= min_bath:
         return f"{listing.toilets} bathrooms", 10
     if listing.separate_toilet_shower:
         return "separate toilet/shower", 6

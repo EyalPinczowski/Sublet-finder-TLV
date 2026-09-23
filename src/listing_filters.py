@@ -1,10 +1,32 @@
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 
 from .config import SearchConfig, StayConfig, ZoneConfig
 from .listing_models import Listing
 from .zones import within_zone
+
+# Hebrew final letters revert to their regular form once a suffix is
+# added (e.g. מתווך "broker" ends in final-kaf ך, but מתווכת "broker"
+# (fem.)/מתווכים (pl.) use regular-kaf כ instead) — so each root needs
+# both a "regular-kaf + more letters" branch and a "final-kaf, standalone"
+# branch; \w* alone after the final-kaf form would never match the
+# inflected ones.
+_BROKER_TERM_RE = re.compile(r"(?:תיווכ\w*|תיווך\b|מתווכ\w*|מתווך\b)")
+_BROKER_NEGATED_RE = re.compile(
+    r"(?:ללא|בלי|אין)\s+(?:תיווכ\w*|תיווך\b|מתווכ\w*|מתווך\b)"
+)
+
+
+def _mentions_broker(raw_text: str) -> bool:
+    """True if the post looks like a broker/agency listing. "ללא תיווך"/
+    "בלי תיווך"/"אין תיווך" ("no broker fee") is the OPPOSITE signal — a
+    direct-from-tenant post advertising that it's NOT brokered — so those
+    negated mentions are stripped before checking for a real one."""
+    text = raw_text or ""
+    stripped = _BROKER_NEGATED_RE.sub("", text)
+    return bool(_BROKER_TERM_RE.search(stripped))
 
 
 def _resolve_dates(
@@ -39,6 +61,25 @@ def matches(
     stay_cfg: StayConfig | None = None,
     today: date | None = None,
 ) -> bool:
+    """Full check — still the single source of truth (used directly by
+    tests and by --dry-run's per-post evaluation), composed of the two
+    phases below so a caller (cli.py's _scan) can run the cheap one first
+    and only geocode a listing that has a real chance of matching."""
+    return matches_without_location(
+        listing, search_cfg, stay_cfg, today
+    ) and location_ok(listing, search_cfg, zone_cfg)
+
+
+def matches_without_location(
+    listing: Listing,
+    search_cfg: SearchConfig,
+    stay_cfg: StayConfig | None = None,
+    today: date | None = None,
+) -> bool:
+    """Everything EXCEPT the neighborhoods/zone-distance check (see
+    location_ok) — no geocoding required. Run this first, before
+    geocoding a new listing, so one that was always going to fail on
+    price/rooms/excluded-keywords/broker/etc. never pays for a lookup."""
     price_min, price_max = search_cfg.price_min, search_cfg.price_max
 
     if stay_cfg is not None:
@@ -80,20 +121,6 @@ def matches(
     ):
         return False
 
-    if search_cfg.neighborhoods:
-        # listing.neighborhoods_mentioned is extracted once per post against
-        # the UNION of every configured profile's neighborhoods (see
-        # Config.all_neighborhoods), so here we narrow it down to just this
-        # profile's own list — required now that different profiles can
-        # configure different neighborhoods.
-        profile_hit = any(n in search_cfg.neighborhoods for n in listing.neighborhoods_mentioned)
-        # A neighborhood-keyword miss is still a match if the listing
-        # geocoded within the configured zone radius (see zones.py) — the
-        # two are OR'd so a missing/failed geocode never regresses the
-        # existing keyword-only behavior.
-        if not profile_hit and not (zone_cfg and within_zone(listing.distance_m, zone_cfg)):
-            return False
-
     if (
         search_cfg.min_available_rooms is not None
         and listing.available_rooms is not None
@@ -113,6 +140,9 @@ def matches(
         if any(k.lower() in lowered for k in search_cfg.excluded_keywords):
             return False
 
+    if _mentions_broker(listing.raw_text):
+        return False
+
     if (
         search_cfg.max_roommates is not None
         and listing.roommates is not None
@@ -124,6 +154,25 @@ def matches(
         return False
 
     return True
+
+
+def location_ok(listing: Listing, search_cfg: SearchConfig, zone_cfg: ZoneConfig | None) -> bool:
+    """The neighborhoods/zone-distance check, split out from
+    matches_without_location so it can run AFTER geocoding (see
+    matches())."""
+    if not search_cfg.neighborhoods:
+        return True
+    # listing.neighborhoods_mentioned is extracted once per post against
+    # the UNION of every configured profile's neighborhoods (see
+    # Config.all_neighborhoods), so here we narrow it down to just this
+    # profile's own list — required now that different profiles can
+    # configure different neighborhoods.
+    profile_hit = any(n in search_cfg.neighborhoods for n in listing.neighborhoods_mentioned)
+    # A neighborhood-keyword miss is still a match if the listing geocoded
+    # within the configured zone radius (see zones.py) — the two are OR'd
+    # so a missing/failed geocode never regresses the existing
+    # keyword-only behavior.
+    return bool(profile_hit or (zone_cfg and within_zone(listing.distance_m, zone_cfg)))
 
 
 def _bathrooms_ok(listing: Listing, search_cfg: SearchConfig) -> bool:

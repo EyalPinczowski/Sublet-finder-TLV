@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, sync_playwright
@@ -56,3 +57,26 @@ def open_authenticated_context(playwright, headless: bool = True) -> BrowserCont
     if headless:
         context_kwargs["user_agent"] = _HEADLESS_USER_AGENT
     return browser.new_context(**context_kwargs)
+
+
+@contextmanager
+def open_scan_session(headless: bool = True):
+    """One Playwright browser + authenticated context for an entire scan
+    (every group, plus dead-link pruning) — opened once and reused rather
+    than a fresh browser process per group/task. Cheaper, and reads as one
+    continuous browsing session rather than a mechanically repeated
+    launch/teardown pattern. Session cookies are re-saved to
+    STORAGE_STATE_PATH on exit (best-effort) so Facebook's normal
+    in-session cookie rotation is captured for next time, instead of every
+    run replaying the exact same static cookie jar from the original
+    manual login."""
+    with sync_playwright() as p:
+        context = open_authenticated_context(p, headless=headless)
+        try:
+            yield context
+        finally:
+            try:
+                context.storage_state(path=str(STORAGE_STATE_PATH))
+            except Exception:
+                pass
+            context.close()

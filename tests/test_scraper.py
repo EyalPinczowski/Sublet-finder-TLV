@@ -1,10 +1,13 @@
 import os
+import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
 from src import scraper
+from src.config import FacebookGroup
 
 
 def test_text_sig_is_stable_for_same_text():
@@ -80,6 +83,37 @@ def test_run_lock_reclaims_a_stale_lock_from_a_dead_pid(tmp_path, monkeypatch):
     scraper.LOCK_PATH.write_text(str(dead_pid))
     with scraper.run_lock():
         assert int(scraper.LOCK_PATH.read_text()) == os.getpid()
+
+
+def test_run_lock_does_not_reclaim_a_fresh_lock_from_a_live_pid(tmp_path, monkeypatch):
+    monkeypatch.setattr(scraper, "LOCK_PATH", tmp_path / "scan.lock")
+    proc = subprocess.Popen(["sleep", "5"])
+    try:
+        scraper.LOCK_PATH.write_text(str(proc.pid))  # fresh mtime — not stale
+        with pytest.raises(scraper.ScanAlreadyRunning):
+            with scraper.run_lock():
+                pass
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_run_lock_reclaims_and_terminates_a_wedged_but_still_alive_process(tmp_path, monkeypatch):
+    monkeypatch.setattr(scraper, "LOCK_PATH", tmp_path / "scan.lock")
+    monkeypatch.setattr(scraper, "_STALE_LOCK_MAX_AGE_SECONDS", 0)  # anything counts as stale
+    proc = subprocess.Popen(["sleep", "30"])
+    try:
+        scraper.LOCK_PATH.write_text(str(proc.pid))
+        old = time.time() - 100
+        os.utime(scraper.LOCK_PATH, (old, old))
+        with scraper.run_lock():
+            assert int(scraper.LOCK_PATH.read_text()) == os.getpid()
+        proc.wait(timeout=5)
+        assert proc.poll() is not None  # the wedged process was terminated, not just ignored
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
 
 # --- relative/absolute timestamp parsing ---
@@ -208,8 +242,21 @@ def test_force_chronological_sort_returns_false_on_failure():
 
 
 def _fixed_count_page(count: int) -> MagicMock:
+    """A page whose [role="article"] locator reports a fixed count, and
+    whose _blocked_reason() probes (login-form inputs) always report
+    "not present" — otherwise a bare page.locator(...).count.return_value
+    would apply to EVERY selector, including the login-form check
+    _scroll_and_extract now runs each iteration, causing a false-positive
+    ScraperBlocked on every test using this helper."""
     page = MagicMock()
-    page.locator.return_value.count.return_value = count
+    page.url = "https://www.facebook.com/groups/1"
+
+    def locator_side_effect(selector):
+        loc = MagicMock()
+        loc.count.return_value = count if selector == '[role="article"]' else 0
+        return loc
+
+    page.locator.side_effect = locator_side_effect
     return page
 
 
@@ -220,7 +267,7 @@ def test_scroll_and_extract_stops_at_limit(monkeypatch):
         scraper.RawPost(post_url=f"https://fb.com/{i}", author="a", text="t") for i in range(10)
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, limit=5, cutoff=None, max_scrolls=15)
+    result = scraper._scroll_and_extract(page, "g1", limit=5, cutoff=None, max_scrolls=15)
     assert len(result) == 5
 
 
@@ -242,7 +289,7 @@ def test_scroll_and_extract_stops_on_consecutive_old_posts(monkeypatch):
         ]
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, limit=100, cutoff=cutoff, max_scrolls=15)
+    result = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=cutoff, max_scrolls=15)
     assert [p.post_url for p in result] == [
         "https://fb.com/1",
         "https://fb.com/2",
@@ -268,7 +315,7 @@ def test_scroll_and_extract_resets_consecutive_old_counter_on_a_new_post(monkeyp
         ]
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, limit=100, cutoff=cutoff, max_scrolls=15)
+    result = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=cutoff, max_scrolls=15)
     assert len(result) == 6  # the post at #3 reset the counter, so #4-6 are needed to stop
 
 
@@ -281,7 +328,7 @@ def test_scroll_and_extract_unknown_age_never_triggers_stop(monkeypatch):
         for i in range(10)
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, limit=10, cutoff=cutoff, max_scrolls=15)
+    result = scraper._scroll_and_extract(page, "g1", limit=10, cutoff=cutoff, max_scrolls=15)
     assert len(result) == 10
 
 
@@ -294,7 +341,7 @@ def test_scroll_and_extract_cutoff_none_disables_age_based_stopping(monkeypatch)
         for i in range(10)
     )
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
-    result = scraper._scroll_and_extract(page, limit=10, cutoff=None, max_scrolls=15)
+    result = scraper._scroll_and_extract(page, "g1", limit=10, cutoff=None, max_scrolls=15)
     assert len(result) == 10
 
 
@@ -303,8 +350,83 @@ def test_scroll_and_extract_respects_max_scrolls_cap(monkeypatch):
     page = _fixed_count_page(2)  # the DOM never grows past 2 articles
     single_post = scraper.RawPost(post_url="https://fb.com/1", author="a", text="t")
     monkeypatch.setattr(scraper, "_extract_one_post", lambda article: single_post)
-    result = scraper._scroll_and_extract(page, limit=100, cutoff=None, max_scrolls=3)
+    result = scraper._scroll_and_extract(page, "g1", limit=100, cutoff=None, max_scrolls=3)
     assert len(result) == 1  # never reaches `limit`; terminates via max_scrolls, not a hang
+
+
+def test_scroll_and_extract_detects_a_mid_session_checkpoint(monkeypatch):
+    """A checkpoint appearing partway through scrolling (not just before
+    the first scroll) must still raise ScraperBlocked, not silently keep
+    scrolling a checkpoint page."""
+    monkeypatch.setattr(scraper, "_jitter", lambda *_: None)
+    page = MagicMock()
+    page.url = "https://www.facebook.com/groups/1"
+    counts = iter([1, 2])  # simulates one more article loading in per scroll
+
+    def locator_side_effect(selector):
+        loc = MagicMock()
+        loc.count.return_value = next(counts, 2) if selector == '[role="article"]' else 0
+        return loc
+
+    page.locator.side_effect = locator_side_effect
+
+    call_count = {"n": 0}
+
+    def fake_blocked_reason(_page):
+        call_count["n"] += 1
+        return None if call_count["n"] == 1 else "checkpoint appeared"
+
+    monkeypatch.setattr(scraper, "_blocked_reason", fake_blocked_reason)
+    snapshot_calls = []
+    monkeypatch.setattr(
+        scraper, "_save_checkpoint_snapshot", lambda name, p: snapshot_calls.append(name)
+    )
+    posts = iter([scraper.RawPost(post_url="https://fb.com/1", author="a", text="t")])
+    monkeypatch.setattr(scraper, "_extract_one_post", lambda article: next(posts))
+
+    with pytest.raises(scraper.ScraperBlocked):
+        scraper._scroll_and_extract(page, "g1", limit=100, cutoff=None, max_scrolls=15)
+    assert snapshot_calls == ["g1"]
+
+
+# --- scrape_group: context-based session (one page per group, shared context) ---
+
+
+def test_scrape_group_closes_its_page_on_success(monkeypatch):
+    monkeypatch.setattr(scraper, "_jitter", lambda *_: None)
+    monkeypatch.setattr(scraper, "_blocked_reason", lambda page: None)
+    monkeypatch.setattr(scraper, "_force_chronological_sort", lambda page: True)
+    monkeypatch.setattr(scraper, "_scroll_and_extract", lambda *a, **k: [])
+    context = MagicMock()
+    group = FacebookGroup(name="g1", url="https://facebook.com/groups/1")
+    result = scraper.scrape_group(context, group, limit=10)
+    assert result == []
+    context.new_page.return_value.close.assert_called_once()
+
+
+def test_scrape_group_closes_its_page_even_when_blocked(monkeypatch):
+    monkeypatch.setattr(scraper, "_jitter", lambda *_: None)
+    monkeypatch.setattr(scraper, "_blocked_reason", lambda page: "blocked!")
+    monkeypatch.setattr(scraper, "_save_checkpoint_snapshot", lambda name, page: None)
+    context = MagicMock()
+    group = FacebookGroup(name="g1", url="https://facebook.com/groups/1")
+    with pytest.raises(scraper.ScraperBlocked):
+        scraper.scrape_group(context, group, limit=10)
+    context.new_page.return_value.close.assert_called_once()
+
+
+def test_scrape_group_does_not_open_its_own_browser_session(monkeypatch):
+    """scrape_group must use the context it's handed, never open its own
+    Playwright session — that's browser.open_scan_session's job now,
+    shared across the whole scan."""
+    monkeypatch.setattr(scraper, "_jitter", lambda *_: None)
+    monkeypatch.setattr(scraper, "_blocked_reason", lambda page: None)
+    monkeypatch.setattr(scraper, "_force_chronological_sort", lambda page: True)
+    monkeypatch.setattr(scraper, "_scroll_and_extract", lambda *a, **k: [])
+    context = MagicMock()
+    group = FacebookGroup(name="g1", url="https://facebook.com/groups/1")
+    scraper.scrape_group(context, group, limit=10)
+    context.new_page.assert_called_once()
 
 
 # --- checkpoint debug screenshot ---
