@@ -39,6 +39,89 @@ def test_insert_and_find_by_content_hash(isolated_db):
         assert found == listing.post_url
 
 
+def test_phone_hash_key_none_without_phone():
+    assert store.phone_hash_key(make_listing(phone=None)) is None
+
+
+def test_phone_hash_key_stable_for_same_listing():
+    a = store.phone_hash_key(make_listing(phone="050-1234567"))
+    b = store.phone_hash_key(make_listing(phone="050-1234567"))
+    assert a == b
+
+
+def test_phone_hash_key_ignores_formatting_differences():
+    a = store.phone_hash_key(make_listing(phone="050-1234567"))
+    b = store.phone_hash_key(make_listing(phone="0501234567"))
+    assert a == b
+
+
+def test_phone_hash_key_differs_for_different_phone():
+    a = store.phone_hash_key(make_listing(phone="050-1234567"))
+    b = store.phone_hash_key(make_listing(phone="052-7654321"))
+    assert a != b
+
+
+def test_insert_and_find_by_phone_hash(isolated_db):
+    listing = make_listing(phone="050-1234567")
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        found = store.find_by_phone_hash(conn, store.phone_hash_key(listing))
+        assert found == listing.post_url
+
+
+def test_find_by_phone_hash_none_when_no_phone(isolated_db):
+    with store.connect() as conn:
+        assert store.find_by_phone_hash(conn, None) is None
+
+
+def test_connect_migrates_a_pre_existing_db_missing_phone_hash(isolated_db):
+    """A DB created before the phone_hash column existed must still work —
+    connect() adds the column (and its index) on the fly rather than
+    failing on the next insert."""
+    import sqlite3
+
+    conn = sqlite3.connect(store.DB_PATH)
+    conn.executescript(
+        """
+        CREATE TABLE listings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_url TEXT UNIQUE NOT NULL,
+            group_name TEXT NOT NULL,
+            raw_text TEXT NOT NULL,
+            price INTEGER, rooms REAL, neighborhoods TEXT, roommates INTEGER,
+            toilets INTEGER, available_rooms INTEGER, lease_start_date TEXT,
+            lease_end_date TEXT, lease_duration_days INTEGER, address TEXT,
+            phone TEXT, images TEXT, summary TEXT, lat REAL, lon REAL,
+            distance_m REAL, score INTEGER, content_hash TEXT,
+            matched INTEGER NOT NULL DEFAULT 0, matched_profiles TEXT,
+            notified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    listing = make_listing(phone="050-1111111")
+    with store.connect() as conn:
+        listing_id = store.insert_listing(conn, listing, matched_profiles=["default"])
+        assert listing_id
+        row = store.list_listings(conn, matched_only=True)[0]
+        assert row.phone_hash == store.phone_hash_key(listing)
+    with store.connect() as conn:  # a second connect() must stay a no-op/idempotent
+        assert len(store.list_listings(conn, matched_only=True)) == 1
+
+
+def test_mark_listing_dead_hides_it_like_a_dismiss(isolated_db):
+    listing = make_listing()
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        assert len(store.list_listings(conn, matched_only=True)) == 1
+        store.mark_listing_dead(conn, listing.post_url)
+        assert store.list_listings(conn, matched_only=True) == []
+        assert store.is_dismissed(conn, listing.post_url) is True
+
+
 def test_insert_ignores_duplicate_post_url(isolated_db):
     listing = make_listing()
     with store.connect() as conn:

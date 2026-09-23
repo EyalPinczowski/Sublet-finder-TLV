@@ -93,6 +93,17 @@ class StayConfig:
 
 
 @dataclass
+class ScanWindowConfig:
+    """How far back a scan looks. The first scan ever run looks back this
+    many days; every scan after that looks back to the last successful
+    scan instead (self-healing if a run was missed), but never further
+    back than this many days even after a long outage — see
+    src/cli.py's `_compute_cutoff`."""
+
+    initial_lookback_days: int = 4
+
+
+@dataclass
 class Config:
     facebook_groups: list[FacebookGroup]
     posts_per_group: int
@@ -101,6 +112,7 @@ class Config:
     llm: LLMConfig
     zone: ZoneConfig
     stay: StayConfig
+    scan_window: ScanWindowConfig
 
     @property
     def all_neighborhoods(self) -> list[str]:
@@ -171,6 +183,11 @@ def load_config(path: Path | None = None) -> Config:
         search_window_days=stay_raw.get("search_window_days", 21),
     )
 
+    scan_window_raw = raw.get("scan_window") or {}
+    scan_window = ScanWindowConfig(
+        initial_lookback_days=scan_window_raw.get("initial_lookback_days", 4),
+    )
+
     config = Config(
         facebook_groups=[FacebookGroup(**g) for g in raw["facebook_groups"]],
         posts_per_group=raw["posts_per_group"],
@@ -179,6 +196,7 @@ def load_config(path: Path | None = None) -> Config:
         llm=llm,
         zone=zone,
         stay=stay,
+        scan_window=scan_window,
     )
     validate(config)
     return config
@@ -234,6 +252,11 @@ def validate(config: Config) -> None:
     if config.stay.search_window_days <= 0:
         problems.append(
             f"stay.search_window_days ({config.stay.search_window_days}) must be > 0"
+        )
+    if config.scan_window.initial_lookback_days <= 0:
+        problems.append(
+            f"scan_window.initial_lookback_days "
+            f"({config.scan_window.initial_lookback_days}) must be > 0"
         )
     if problems:
         raise SystemExit("config error — fix config.yaml:\n  - " + "\n  - ".join(problems))

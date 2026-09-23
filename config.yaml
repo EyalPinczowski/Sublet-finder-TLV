@@ -53,6 +53,14 @@ stay:
   # Only listings whose lease starts within [today, today + this] count.
   search_window_days: 21
 
+# How far back a scan looks. The very first scan ever run looks back this
+# many days; every scan after that looks back to the last successful scan
+# instead (twice-daily cron => ~12h in normal operation, self-healing if a
+# run was missed), but is capped so it never scans further back than this
+# many days even after a long outage.
+scan_window:
+  initial_lookback_days: 4
+
 # Your criteria for the apartment(s) you're looking to sublet FROM someone —
 # one or more NAMED profiles, each checked against every post in the same
 # scan (no separate runs needed). A post can match more than one profile; it

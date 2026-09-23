@@ -9,6 +9,9 @@ data/login_debug.html
 data/geocode_cache.json
 data/llm_budget.json
 data/dashboard_token.txt
+data/scan_state.json
+data/checkpoint_*.png
+data/scan.log
 data/site/
 auth/
 .pytest_cache/

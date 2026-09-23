@@ -6,6 +6,16 @@ from playwright.sync_api import BrowserContext, sync_playwright
 
 STORAGE_STATE_PATH = Path(__file__).resolve().parent.parent / "data" / "storage_state.json"
 
+# A realistic desktop Chrome UA with no "HeadlessChrome" marker — Chromium's
+# default headless UA advertises itself as headless, a giveaway to anti-bot
+# checks. Only used for the headless (real-scan) path below; the headed
+# login flow in login_and_save_session() is a real human in a real browser
+# and needs no disguising.
+_HEADLESS_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+)
+
 
 def login_and_save_session() -> None:
     """Open a real, visible browser so you can log into Facebook by hand.
@@ -35,5 +45,14 @@ def open_authenticated_context(playwright, headless: bool = True) -> BrowserCont
         raise RuntimeError(
             "No saved Facebook session found. Run `python -m src.cli login` first."
         )
-    browser = playwright.chromium.launch(headless=headless)
-    return browser.new_context(storage_state=str(STORAGE_STATE_PATH))
+    # Anti-detection hardening, headless runs only — a real human drives the
+    # headed login flow above, so it needs none of this.
+    browser = playwright.chromium.launch(
+        headless=headless,
+        args=["--disable-blink-features=AutomationControlled"] if headless else [],
+        ignore_default_args=["--enable-automation"] if headless else [],
+    )
+    context_kwargs: dict = {"storage_state": str(STORAGE_STATE_PATH)}
+    if headless:
+        context_kwargs["user_agent"] = _HEADLESS_USER_AGENT
+    return browser.new_context(**context_kwargs)

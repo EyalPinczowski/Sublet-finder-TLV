@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import random
 import sys
+import time
+from datetime import datetime, timedelta, timezone
 
+from playwright.sync_api import sync_playwright
 from rich.console import Console
 from rich.panel import Panel
 
-from . import geocode, llm_extractor, scoring, sheets, store, telegram_notifier, zones
-from .browser import login_and_save_session
+from . import geocode, llm_extractor, scan_state, scoring, sheets, store, telegram_notifier, zones
+from .browser import login_and_save_session, open_authenticated_context
 from .config import Config, load_config
 from .listing_filters import matches as matches_search
 from .listing_models import Listing
@@ -22,6 +26,13 @@ from .scraper import (
 )
 
 console = Console()
+
+_DEAD_LINK_CHECK_LIMIT = 20  # cap per run — never re-check the whole history
+_DEAD_LINK_MARKERS = (
+    "content isn't available",
+    "this content isn't available right now",
+    "אין אפשרות להציג את התוכן הזה",
+)
 
 
 def cmd_login(_args) -> None:
@@ -70,24 +81,84 @@ def cmd_scan(args) -> None:
     config = load_config()
     try:
         with run_lock():
-            _scan(config, args)
+            blocked = _scan(config, args)
     except ScanAlreadyRunning as exc:
         console.print(f"[red]{exc}[/]")
         sys.exit(1)
+    if blocked:
+        # Exit code 2 = "blocked/session expired", distinct from a crash
+        # (any other non-zero code) or success (0) — lets a cron log show
+        # at a glance whether re-running python -m src.cli login is needed.
+        sys.exit(2)
 
 
-def _scan(config: Config, args) -> None:
+def _compute_cutoff(config: Config) -> datetime:
+    """The first scan ever run looks back initial_lookback_days; every scan
+    after that looks back to the last successful scan instead (self-healing
+    if a run was missed), capped so a long outage never scans further back
+    than initial_lookback_days."""
+    now = datetime.now(timezone.utc)
+    floor = now - timedelta(days=config.scan_window.initial_lookback_days)
+    last = scan_state.load_last_scan_completed_at()
+    if last is None:
+        return floor
+    return max(last, floor)
+
+
+def _prune_dead_links(conn, headless: bool) -> None:
+    """Best-effort: revisit a capped batch of the most-recently-matched
+    listings and mark any Facebook now shows a "content isn't available"
+    placeholder for as dead, so a rented-out apartment stops cluttering
+    matches/dashboard instead of sitting there indefinitely. Any failure
+    here (network hiccup, selector churn) is swallowed — this is a
+    nice-to-have, never worth failing or blocking the scan over."""
+    rows = store.list_listings(conn, matched_only=True)
+    rows.sort(key=lambda r: r.created_at, reverse=True)
+    candidates = [r for r in rows if r.post_url.startswith("http")][:_DEAD_LINK_CHECK_LIMIT]
+    if not candidates:
+        return
+    try:
+        with sync_playwright() as p:
+            context = open_authenticated_context(p, headless=headless)
+            page = context.new_page()
+            for row in candidates:
+                try:
+                    page.goto(row.post_url, wait_until="domcontentloaded", timeout=15000)
+                    time.sleep(random.uniform(1.0, 2.5))
+                    body_text = page.locator("body").inner_text(timeout=2000).lower()
+                except Exception:
+                    continue
+                if any(marker in body_text for marker in _DEAD_LINK_MARKERS):
+                    store.mark_listing_dead(conn, row.post_url)
+                    console.print(f"[yellow]Pruned dead listing:[/] {row.post_url}")
+            context.close()
+    except Exception:
+        pass
+
+
+def _scan(config: Config, args) -> bool:
+    """Returns True if a group scrape hit a checkpoint/login wall
+    (ScraperBlocked) — cmd_scan uses this to exit(2) so an unattended cron
+    run's log shows "blocked, needs a human" instead of looking like a
+    silent hang or an ordinary crash."""
+    cutoff = _compute_cutoff(config)
+    groups = list(config.facebook_groups)
+    random.shuffle(groups)  # don't scan in the same fixed order every run
     with store.connect() as conn:
-        for i, group in enumerate(config.facebook_groups):
+        if not args.dry_run:
+            _prune_dead_links(conn, headless=not args.headed)
+        for i, group in enumerate(groups):
             if i > 0:
                 jitter_between_groups()
             console.rule(f"Scanning {group.name}")
             try:
-                posts = scrape_group(group, limit=config.posts_per_group, headless=not args.headed)
+                posts = scrape_group(
+                    group, limit=config.posts_per_group, cutoff=cutoff, headless=not args.headed
+                )
             except ScraperBlocked as exc:
                 console.print(f"[red]Blocked by Facebook:[/] {exc}")
                 console.print("[red]Stopping this scan — check your session/login.[/]")
-                return
+                return True
             console.print(f"Fetched {len(posts)} posts")
 
             for post in posts:
@@ -101,6 +172,10 @@ def _scan(config: Config, args) -> None:
                 dup_url = store.find_by_content_hash(conn, store.content_hash_key(listing))
                 if dup_url and dup_url != listing.post_url:
                     continue  # likely the same flat, already stored under a different key
+
+                dup_phone_url = store.find_by_phone_hash(conn, store.phone_hash_key(listing))
+                if dup_phone_url and dup_phone_url != listing.post_url:
+                    continue  # same phone+price+rooms — likely a reworded repost
 
                 _geocode_listing(listing, config)
 
@@ -159,7 +234,14 @@ def _scan(config: Config, args) -> None:
                     if any_sent:
                         store.mark_listing_notified(conn, listing_id)
 
+    # Only reached if every group's scrape_group() completed cleanly (no
+    # ScraperBlocked) — the early `return True` above skips this, so a
+    # blocked run doesn't advance the watermark and the next run safely
+    # re-covers that time range (cheap: dedup already makes it a no-op for
+    # anything already stored).
+    scan_state.record_scan_completed()
     console.print("\nRun `python scripts/matches.py` to see everything found so far.")
+    return False
 
 
 def cmd_matches(_args) -> None:

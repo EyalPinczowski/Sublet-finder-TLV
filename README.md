@@ -25,7 +25,10 @@ default**: skip any of it and the tool keeps working with what's configured.
      opens a real visible browser for you to log in.
    Either way, the session is saved to `data/storage_state.json`.
 2. `scripts/scan.py` uses that session to open each group in `config.yaml`,
-   pulls recent posts, and for each new one that looks like an *offer* (not
+   pulls posts **since a cutoff** (see [Scan window &
+   scheduling](#scan-window--scheduling) — the first scan ever looks back
+   several days, every scan after that only looks back to the last
+   successful scan), and for each new one that looks like an *offer* (not
    someone else looking for a place), extracts price/rooms/available-rooms/
    address/roommates/bathrooms/phone/photos and checks it against **every**
    profile in your `searches:` list (and, if configured, the zone-distance
@@ -35,7 +38,11 @@ default**: skip any of it and the tool keeps working with what's configured.
    otherwise or whenever the LLM is unavailable this run. Everything is
    stored in `data/listings.db` (SQLite), so re-running never double-
    processes a post — including cross-posts and comment-less posts with no
-   recoverable permalink, which are matched on their content instead.
+   recoverable permalink, and reworded reposts sharing the same address or
+   phone number, all of which are matched on their content instead of
+   relying on the post URL alone. Each scan also revisits a handful of your
+   most-recent matches to prune any that Facebook now shows as removed
+   (rented out) — see [Dead-link pruning](#dead-link-pruning).
 3. Each matched profile gets its own score (0-100, `src/scoring.py`) and its
    own Telegram alert — with that profile's emoji/name in the header (the
    "color"), a summary, price/rooms/roommates/bathrooms/available-rooms, the
@@ -184,6 +191,71 @@ otherwise-matching listing with no stated price says "Price not listed"
 rather than silently omitting the line, so it doesn't look identical to
 one that was simply cut off.
 
+### Scan window & scheduling
+
+`config.yaml`'s `scan_window:` block controls how far back a scan looks:
+
+```yaml
+scan_window:
+  initial_lookback_days: 4
+```
+
+The **very first scan ever run** looks back this many days. **Every scan
+after that** looks back to the last successful scan instead — running
+twice a day (see the cron setup below) this naturally works out to about
+12 hours, and if a run gets missed (phone off, no network), the next one
+self-heals by covering the gap — but it's capped so a long outage never
+scans further back than `initial_lookback_days`, however long the tool was
+down. This is separate from (and layered on top of) the existing
+`post_url`/content-hash dedup — the DB already guarantees nothing
+already-suggested is suggested again, so the cutoff is purely about not
+wastefully re-scraping/re-classifying old posts on every run, not about
+correctness.
+
+This needs the group feed sorted chronologically ("New posts", not
+Facebook's default "Most relevant") to work correctly — the scanner
+switches it automatically. If that switch ever fails (a selector changed),
+the scan safely falls back to the old fixed-count behavior for that run
+rather than silently under-scanning.
+
+**Running it on a schedule** (e.g. twice daily via `cron`, inside a Termux/
+proot-distro chroot on a phone/tablet with no desktop environment):
+
+```bash
+apt install -y cron
+crontab -e
+```
+Add:
+```
+0 8 * * *  cd /path/to/Sublet-finder-TLV && .venv/bin/python -m src.cli scan >> data/scan.log 2>&1
+0 20 * * * cd /path/to/Sublet-finder-TLV && .venv/bin/python -m src.cli scan >> data/scan.log 2>&1
+```
+Then `service cron start`. A few things worth knowing on Termux
+specifically: confirm the chroot's timezone first (`date`) so `0 8`/`0 20`
+line up with your actual local time; cron here only runs while Termux
+itself is alive (force-closing the app or rebooting the device stops it
+until you reopen Termux and run `service cron start` again); and Android's
+battery optimization can pause Termux in the background regardless — set
+it to "Unrestricted" for reliable scheduled runs.
+
+**Exit codes**, so a cron log (or `echo $?`) tells you what happened
+without reading the full output: `0` = ran cleanly, `2` = Facebook showed a
+checkpoint/login wall mid-scan (your saved session likely expired — a
+debug screenshot is saved to `data/checkpoint_<group name>.png`, and
+`python -m src.cli login` or the headless-login trick needs to be redone),
+any other non-zero code = a genuine bug, not a session problem.
+
+### Dead-link pruning
+
+Each scan revisits a capped batch (20) of your most-recently-matched
+listings and checks whether Facebook now shows a "content isn't available"
+placeholder for the post — meaning the apartment's likely been rented out
+or the post removed. A confirmed-dead listing is hidden from
+`matches.py`/the dashboard/the published snapshot the same way a manual
+🗑 Dismiss is, instead of sitting there indefinitely. This check is
+best-effort and never fails or blocks a scan — a network hiccup or a
+markup change just means it's skipped for that run.
+
 ## Usage
 
 ```bash
@@ -197,7 +269,10 @@ Re-run the login script whenever the session expires (Facebook logs you out
 after a while of inactivity, or if it flags the login as suspicious). A scan
 refuses to start a second time while one is already running (a lock file in
 `data/scan.lock`), and stops cleanly instead of scraping garbage if Facebook
-shows a checkpoint/login wall.
+shows a checkpoint/login wall — exiting with code `2` and saving a debug
+screenshot (`data/checkpoint_<group name>.png`) so an unattended/cron run is
+easy to distinguish from an ordinary crash; see [Scan window &
+scheduling](#scan-window--scheduling).
 
 ## Optional extras
 
@@ -286,9 +361,13 @@ Nominatim, or Google Sheets calls, and they never touch `data/listings.db`
   still a gray area under Facebook's ToS, and your account could be flagged
   or restricted. Use at your own risk, keep scan frequency low, and never
   leave it running unattended at scale. `src/scraper.py` jitters its delays
-  and detects a checkpoint/login wall rather than scraping through it, but
-  neither of those makes automated scraping compliant with Facebook's ToS —
-  they only reduce how detectable and how damaging a scan is.
+  and scroll distances, shuffles the group scan order, strips a couple of
+  the most obvious automation markers from the headless browser (a
+  `HeadlessChrome`-free user agent, `--disable-blink-features=
+  AutomationControlled`), and detects a checkpoint/login wall rather than
+  scraping through it — but none of that makes automated scraping compliant
+  with Facebook's ToS, it only reduces how detectable and how damaging a
+  scan is.
 - Facebook's markup changes often and uses randomized class names, so the
   scraper in `src/scraper.py` relies on structural hints (`role="article"`,
   permalink patterns) that may need small tweaks over time if extraction
