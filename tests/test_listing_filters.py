@@ -1,7 +1,13 @@
 from datetime import date, timedelta
 
 from src.config import SearchConfig, StayConfig, ZoneConfig
-from src.listing_filters import _resolve_dates, location_ok, matches, matches_without_location
+from src.listing_filters import (
+    _resolve_dates,
+    explain_mismatch,
+    location_ok,
+    matches,
+    matches_without_location,
+)
 from src.listing_models import Listing
 
 
@@ -445,3 +451,112 @@ def test_missing_price_still_passes_with_stay_config_given():
     cfg = SearchConfig(price_min=2700, price_max=3600)
     stay = StayConfig(min_days=14, search_window_days=21)
     assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is True
+
+
+def test_explain_mismatch_empty_when_it_matches():
+    listing = make_listing(price=4500, neighborhoods_mentioned=["florentin"])
+    cfg = SearchConfig(price_max=5000, neighborhoods=["florentin"])
+    assert explain_mismatch(listing, cfg) == []
+
+
+def test_explain_mismatch_no_date_info():
+    listing = make_listing()
+    stay = StayConfig(min_days=14, search_window_days=21)
+    reasons = explain_mismatch(listing, SearchConfig(), stay_cfg=stay, today=TODAY)
+    assert any("date" in r or "duration" in r for r in reasons)
+
+
+def test_explain_mismatch_stay_too_short():
+    listing = make_listing(lease_duration_days=10)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    reasons = explain_mismatch(listing, SearchConfig(), stay_cfg=stay, today=TODAY)
+    assert any("10 days" in r for r in reasons)
+
+
+def test_explain_mismatch_start_outside_window():
+    listing = make_listing(lease_start_date=TODAY + timedelta(days=30), lease_duration_days=14)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    reasons = explain_mismatch(listing, SearchConfig(), stay_cfg=stay, today=TODAY)
+    assert any("search window" in r for r in reasons)
+
+
+def test_explain_mismatch_price_too_high():
+    listing = make_listing(price=6000)
+    cfg = SearchConfig(price_max=5000)
+    reasons = explain_mismatch(listing, cfg)
+    assert any("above max" in r for r in reasons)
+
+
+def test_explain_mismatch_price_too_low():
+    listing = make_listing(price=1000)
+    cfg = SearchConfig(price_min=3000)
+    reasons = explain_mismatch(listing, cfg)
+    assert any("below min" in r for r in reasons)
+
+
+def test_explain_mismatch_too_few_rooms():
+    listing = make_listing(rooms=1.0)
+    cfg = SearchConfig(min_rooms=2.0)
+    reasons = explain_mismatch(listing, cfg)
+    assert any("rooms, need at least" in r for r in reasons)
+
+
+def test_explain_mismatch_available_rooms_below_minimum():
+    listing = make_listing(available_rooms=1)
+    cfg = SearchConfig(min_available_rooms=2)
+    reasons = explain_mismatch(listing, cfg)
+    assert any("available rooms, need at least" in r for r in reasons)
+
+
+def test_explain_mismatch_available_rooms_above_maximum():
+    listing = make_listing(available_rooms=3)
+    cfg = SearchConfig(min_available_rooms=1, max_available_rooms=1)
+    reasons = explain_mismatch(listing, cfg)
+    assert any("available rooms, max is" in r for r in reasons)
+
+
+def test_explain_mismatch_excluded_keyword():
+    listing = make_listing(raw_text="sublet in florentin, roommates wanted")
+    cfg = SearchConfig(excluded_keywords=["roommates wanted"])
+    reasons = explain_mismatch(listing, cfg)
+    assert any("excluded keyword" in r for r in reasons)
+
+
+def test_explain_mismatch_broker():
+    listing = make_listing(raw_text="דירה להשכרה בפלורנטין, לפרטים נא לפנות למתווך")
+    reasons = explain_mismatch(listing, SearchConfig())
+    assert any("broker" in r for r in reasons)
+
+
+def test_explain_mismatch_girls_only():
+    listing = make_listing(raw_text="סאבלט בפלורנטין, רק לבנות")
+    reasons = explain_mismatch(listing, SearchConfig())
+    assert any("women/girls" in r for r in reasons)
+
+
+def test_explain_mismatch_too_many_roommates():
+    listing = make_listing(roommates=4)
+    cfg = SearchConfig(max_roommates=3)
+    reasons = explain_mismatch(listing, cfg)
+    assert any("roommates, max is" in r for r in reasons)
+
+
+def test_explain_mismatch_bathroom_rule():
+    listing = make_listing(toilets=1, roommates=2, separate_toilet_shower=False)
+    cfg = SearchConfig(min_bathrooms=2, separate_toilet_shower_max_roommates=3)
+    reasons = explain_mismatch(listing, cfg)
+    assert any("bathrooms don't meet the rule" in r for r in reasons)
+
+
+def test_explain_mismatch_neighborhood_miss():
+    listing = make_listing(neighborhoods_mentioned=[])
+    cfg = SearchConfig(neighborhoods=["florentin", "rothschild"])
+    reasons = explain_mismatch(listing, cfg)
+    assert any("neighborhood" in r for r in reasons)
+
+
+def test_explain_mismatch_collects_multiple_reasons_at_once():
+    listing = make_listing(price=9000, roommates=5)
+    cfg = SearchConfig(price_max=5000, max_roommates=3)
+    reasons = explain_mismatch(listing, cfg)
+    assert len(reasons) >= 2

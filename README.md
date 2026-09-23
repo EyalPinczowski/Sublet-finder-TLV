@@ -282,8 +282,19 @@ markup change just means it's skipped for that run.
 python scripts/login_facebook_headless.py   # or login_facebook.py with a screen
 python scripts/scan.py                      # pulls posts and checks for matches
 python scripts/scan.py --dry-run            # classify and print, without writing/notifying
+python scripts/scan.py --explain            # sanity check: why isn't anything matching?
 python scripts/matches.py                   # list everything matched so far, best score first
 ```
+
+**`--explain`** is a diagnostic sanity check for "why is a scan finding 0
+matches" — it implies `--dry-run` (never writes to the DB or notifies), and
+for every extracted offer-listing that fails to match any search profile, it
+prints the specific reason(s) it was rejected (price out of range, stay too
+short, wrong neighborhood, broker/girls-only mention, etc.) instead of just
+silently skipping it. Run it once if match counts look suspiciously low —
+either it'll turn up a real bug, or it'll confirm your `config.yaml` criteria
+(price range, neighborhoods, `min_bathrooms`, the lease-dates requirement)
+are just genuinely strict for what's actually being posted right now.
 
 Re-run the login script whenever the session expires (Facebook logs you out
 after a while of inactivity, or if it flags the login as suspicious). A scan

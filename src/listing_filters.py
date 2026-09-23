@@ -194,6 +194,113 @@ def matches_without_location(
     return True
 
 
+def explain_mismatch(
+    listing: Listing,
+    search_cfg: SearchConfig,
+    zone_cfg: ZoneConfig | None = None,
+    stay_cfg: StayConfig | None = None,
+    today: date | None = None,
+) -> list[str]:
+    """Every reason matches() would reject this listing against this one
+    profile, in the same order matches() checks them — empty list means it
+    matches. Diagnostic-only: mirrors matches_without_location()/
+    location_ok() but collects every reason instead of short-circuiting on
+    the first one, so a "why isn't anything matching" sanity check (see
+    cli.py's --explain flag) can show the actual cause rather than a bare
+    yes/no. Never used by the scan's real match decision — matches()/
+    matches_without_location()/location_ok() stay the single source of
+    truth for that."""
+    reasons: list[str] = []
+    price_min, price_max = search_cfg.price_min, search_cfg.price_max
+
+    if stay_cfg is not None:
+        start, duration = _resolve_dates(listing, today=today)
+        if duration is None:
+            reasons.append("no lease start/end date or duration could be determined")
+        else:
+            if duration < stay_cfg.min_days:
+                reasons.append(f"stay is {duration} days, need at least {stay_cfg.min_days}")
+            if start is not None:
+                window_start = today or date.today()
+                window_end = window_start + timedelta(days=stay_cfg.search_window_days)
+                if not (window_start <= start <= window_end):
+                    reasons.append(
+                        f"lease starts {start.isoformat()}, outside the "
+                        f"{stay_cfg.search_window_days}-day search window"
+                    )
+            factor = min(duration / 30, 1.0)
+            if price_min is not None:
+                price_min = price_min * factor
+            if price_max is not None:
+                price_max = price_max * factor
+
+    if price_max is not None and listing.price is not None and listing.price > price_max:
+        reasons.append(f"price {listing.price} above max {price_max:.0f}")
+
+    if price_min is not None and listing.price is not None and listing.price < price_min:
+        reasons.append(f"price {listing.price} below min {price_min:.0f}")
+
+    if (
+        search_cfg.min_rooms is not None
+        and listing.rooms is not None
+        and listing.rooms < search_cfg.min_rooms
+    ):
+        reasons.append(f"{listing.rooms} rooms, need at least {search_cfg.min_rooms}")
+
+    if (
+        search_cfg.min_available_rooms is not None
+        and listing.available_rooms is not None
+        and listing.available_rooms < search_cfg.min_available_rooms
+    ):
+        reasons.append(
+            f"{listing.available_rooms} available rooms, need at least "
+            f"{search_cfg.min_available_rooms}"
+        )
+
+    if (
+        search_cfg.max_available_rooms is not None
+        and listing.available_rooms is not None
+        and listing.available_rooms > search_cfg.max_available_rooms
+    ):
+        reasons.append(
+            f"{listing.available_rooms} available rooms, max is {search_cfg.max_available_rooms}"
+        )
+
+    if search_cfg.excluded_keywords:
+        lowered = listing.raw_text.lower()
+        hit = [k for k in search_cfg.excluded_keywords if k.lower() in lowered]
+        if hit:
+            reasons.append(f"contains excluded keyword: {', '.join(hit)}")
+
+    if _mentions_broker(listing.raw_text):
+        reasons.append("mentions a broker/agency")
+
+    if _mentions_girls_only(listing.raw_text):
+        reasons.append("restricted to women/girls only")
+
+    if (
+        search_cfg.max_roommates is not None
+        and listing.roommates is not None
+        and listing.roommates > search_cfg.max_roommates
+    ):
+        reasons.append(f"{listing.roommates} roommates, max is {search_cfg.max_roommates}")
+
+    if not _bathrooms_ok(listing, search_cfg):
+        toilets = listing.toilets if listing.toilets is not None else "?"
+        reasons.append(
+            f"bathrooms don't meet the rule (has {toilets}, need {search_cfg.min_bathrooms})"
+        )
+
+    if search_cfg.neighborhoods and not location_ok(listing, search_cfg, zone_cfg):
+        reasons.append(
+            "neighborhood not in profile's list and outside the zone radius"
+            if zone_cfg and zone_cfg.active
+            else "neighborhood not in profile's list (no zone configured as a fallback)"
+        )
+
+    return reasons
+
+
 def location_ok(listing: Listing, search_cfg: SearchConfig, zone_cfg: ZoneConfig | None) -> bool:
     """The neighborhoods/zone-distance check, split out from
     matches_without_location so it can run AFTER geocoding (see

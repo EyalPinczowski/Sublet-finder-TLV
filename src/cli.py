@@ -203,11 +203,46 @@ def _prune_dead_links(context, conn) -> bool:
     return completed
 
 
+def _describe_listing(listing: Listing) -> str:
+    price = f"{listing.price} ILS" if listing.price is not None else "price?"
+    rooms = f"{listing.rooms} rooms" if listing.rooms is not None else "rooms?"
+    avail = f"{listing.available_rooms} avail" if listing.available_rooms is not None else "avail?"
+    return f"{price}, {rooms}, {avail}"
+
+
+def _print_explain(profiles, listing: Listing, group_name: str, config: Config) -> None:
+    """--explain diagnostic output for a listing that matched no profile —
+    one line per profile naming every reason it didn't match, via
+    listing_filters.explain_mismatch(). Never affects real scan behavior;
+    matches()/matches_without_location()/location_ok() are still the only
+    functions that decide what actually gets stored/notified."""
+    for p in profiles:
+        reasons = listing_filters.explain_mismatch(listing, p, config.zone, config.stay)
+        why = "; ".join(reasons) if reasons else "(no reason recorded — this is a bug)"
+        # Profile/group names and the reasons text come from user config and
+        # extracted post text, not a fixed format string — square brackets
+        # in any of them would otherwise be parsed as Rich markup tags
+        # (e.g. a profile literally named "default" disappearing, since
+        # that's also a valid Rich style name). markup=False keeps the
+        # whole line literal.
+        console.print(
+            f"No match — {p.name} ({group_name}): "
+            f"{_describe_listing(listing)} — {why} — {listing.post_url}",
+            markup=False,
+        )
+
+
 def _scan(config: Config, args) -> bool:
     """Returns True if a group scrape hit a checkpoint/login wall
     (ScraperBlocked) — cmd_scan uses this to exit(2) so an unattended cron
     run's log shows "blocked, needs a human" instead of looking like a
     silent hang or an ordinary crash."""
+    explain = getattr(args, "explain", False)
+    if explain:
+        # --explain is a read-only diagnostic on top of --dry-run — never
+        # writes to the DB or notifies, same guarantee dry-run already
+        # makes, so it always implies it rather than requiring both flags.
+        args.dry_run = True
     cutoff = _compute_cutoff(config)
     groups = list(config.facebook_groups)
     random.shuffle(groups)  # don't scan in the same fixed order every run
@@ -293,6 +328,8 @@ def _scan(config: Config, args) -> bool:
                     if listing_filters.matches_without_location(listing, p, config.stay)
                 ]
                 if not candidate_profiles:
+                    if explain:
+                        _print_explain(config.searches, listing, group.name, config)
                     continue
 
                 _geocode_listing(listing, config)
@@ -318,6 +355,11 @@ def _scan(config: Config, args) -> bool:
                 }
                 if matched_profiles:
                     listing.score = max(scores.values())
+                elif explain:
+                    # Passed the cheap filters but failed location_ok for
+                    # every candidate — geocoding has happened by now, so
+                    # explain_mismatch can report a real distance reason.
+                    _print_explain(candidate_profiles, listing, group.name, config)
 
                 if args.dry_run:
                     for p in matched_profiles:
@@ -440,6 +482,15 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Classify and print what would match, without writing to the DB or notifying",
+    )
+    scan_parser.add_argument(
+        "--explain",
+        action="store_true",
+        help=(
+            "Sanity-check mode: for every extracted offer-listing that matches no "
+            "search profile, print the specific reason(s) it was rejected. Implies "
+            "--dry-run (never writes to the DB or notifies)."
+        ),
     )
     scan_parser.set_defaults(func=cmd_scan)
 

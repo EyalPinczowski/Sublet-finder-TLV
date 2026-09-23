@@ -41,9 +41,10 @@ def make_config(**overrides) -> Config:
 
 
 class _Args:
-    def __init__(self, headed=False, dry_run=False):
+    def __init__(self, headed=False, dry_run=False, explain=False):
         self.headed = headed
         self.dry_run = dry_run
+        self.explain = explain
 
 
 # --- _compute_cutoff ---
@@ -540,6 +541,105 @@ def test_scan_geocodes_when_cheap_filters_pass(isolated_db, monkeypatch):
 
     cli._scan(make_config(), _Args())
     assert geocode_calls == [1]
+
+
+# --- --explain: sanity-check diagnostics for listings that match nothing ---
+
+
+def test_explain_implies_dry_run(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+    _patch_matches_everything(monkeypatch)
+
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t")
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
+    listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t", price=4500)
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+
+    args = _Args(explain=True)
+    cli._scan(make_config(), args)
+    assert args.dry_run is True
+
+    with store.connect() as conn:
+        assert store.list_listings(conn, matched_only=True) == []
+
+
+def test_explain_prints_reasons_when_no_profile_matches_without_location(
+    isolated_db, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t")
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
+    listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t", price=9000)
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+    monkeypatch.setattr(cli.listing_filters, "matches_without_location", lambda *a, **k: False)
+
+    geocode_calls = []
+    monkeypatch.setattr(cli, "_geocode_listing", lambda listing, config: geocode_calls.append(1))
+
+    config = make_config(searches=[SearchConfig(name="default", price_max=5000)])
+    cli._scan(config, _Args(explain=True))
+
+    assert geocode_calls == []  # still never geocodes a listing failing the cheap phase
+    out = capsys.readouterr().out
+    assert "No match" in out
+    assert "default" in out
+    assert "above max" in out
+    assert post.post_url in out
+
+
+def test_explain_prints_reasons_when_only_location_fails(isolated_db, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t")
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
+    listing = Listing(
+        post_url=post.post_url, group_name="g1", raw_text="t", price=4500,
+        neighborhoods_mentioned=[],
+    )
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+    monkeypatch.setattr(cli.listing_filters, "matches_without_location", lambda *a, **k: True)
+    monkeypatch.setattr(cli.listing_filters, "location_ok", lambda *a, **k: False)
+    monkeypatch.setattr(cli, "_geocode_listing", lambda listing, config: None)
+
+    config = make_config(
+        searches=[SearchConfig(name="default", neighborhoods=["florentin"])]
+    )
+    cli._scan(config, _Args(explain=True))
+
+    out = capsys.readouterr().out
+    assert "No match" in out
+    assert "neighborhood" in out
+
+
+def test_no_explain_output_without_the_flag(isolated_db, monkeypatch, capsys):
+    """--dry-run alone (no --explain) must not gain the diagnostic
+    printing — only an explicit --explain opts into it."""
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t")
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
+    listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t", price=9000)
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+    monkeypatch.setattr(cli.listing_filters, "matches_without_location", lambda *a, **k: False)
+
+    config = make_config(searches=[SearchConfig(name="default", price_max=5000)])
+    cli._scan(config, _Args(dry_run=True))
+
+    out = capsys.readouterr().out
+    assert "No match" not in out
 
 
 # --- cross-group dedup: the same apartment posted to 2 groups in one scan ---
