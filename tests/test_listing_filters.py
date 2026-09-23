@@ -521,6 +521,27 @@ def test_explain_mismatch_neighborhood_miss():
     assert any("neighborhood" in r for r in reasons)
 
 
+def test_explain_mismatch_neighborhood_miss_not_yet_geocoded():
+    """A listing that failed a cheaper check first (e.g. price) never gets
+    geocoded — explain_mismatch must say so rather than claiming it's
+    "outside the zone radius", which would falsely imply distance was
+    actually checked."""
+    listing = make_listing(neighborhoods_mentioned=[], distance_m=None)
+    cfg = SearchConfig(neighborhoods=["florentin", "rothschild"])
+    zone = ZoneConfig(target_lat=32.0768, target_lon=34.7742, max_distance_meters=1000)
+    reasons = explain_mismatch(listing, cfg, zone_cfg=zone)
+    assert any("not yet checked" in r for r in reasons)
+    assert not any("outside the zone radius" in r for r in reasons)
+
+
+def test_explain_mismatch_neighborhood_miss_geocoded_and_too_far():
+    listing = make_listing(neighborhoods_mentioned=[], distance_m=5000)
+    cfg = SearchConfig(neighborhoods=["florentin", "rothschild"])
+    zone = ZoneConfig(target_lat=32.0768, target_lon=34.7742, max_distance_meters=1000)
+    reasons = explain_mismatch(listing, cfg, zone_cfg=zone)
+    assert any("outside the zone radius" in r for r in reasons)
+
+
 def test_explain_mismatch_collects_multiple_reasons_at_once():
     listing = make_listing(price=9000, roommates=5)
     cfg = SearchConfig(price_max=5000, max_roommates=3)

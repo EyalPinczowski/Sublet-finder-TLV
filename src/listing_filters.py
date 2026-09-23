@@ -283,11 +283,19 @@ def explain_mismatch(
         reasons.append(f"{listing.roommates} roommates, max is {search_cfg.max_roommates}")
 
     if search_cfg.neighborhoods and not location_ok(listing, search_cfg, zone_cfg):
-        reasons.append(
-            "neighborhood not in profile's list and outside the zone radius"
-            if zone_cfg and zone_cfg.active
-            else "neighborhood not in profile's list (no zone configured as a fallback)"
-        )
+        if zone_cfg and zone_cfg.active and listing.distance_m is None:
+            # A zone IS configured, but this listing hasn't been geocoded
+            # yet (explain_mismatch can run before cli.py's _geocode_listing
+            # call, on a listing that already failed a cheaper check) — so
+            # "outside the zone radius" would be misleading; nothing about
+            # distance has actually been checked.
+            reasons.append("neighborhood not in profile's list (location not yet checked)")
+        else:
+            reasons.append(
+                "neighborhood not in profile's list and outside the zone radius"
+                if zone_cfg and zone_cfg.active
+                else "neighborhood not in profile's list (no zone configured as a fallback)"
+            )
 
     return reasons
 
