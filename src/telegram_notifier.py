@@ -50,8 +50,13 @@ def format_alert(listing: Listing, profile: SearchConfig, score: int) -> str:
     lines.append(summary)
     lines.append("")
 
+    # A missing price still shows explicitly — an otherwise-matching listing
+    # with no stated price reads very differently from one where the price
+    # just wasn't mentioned in the alert.
     if listing.price is not None:
-        lines.append(f"\U0001F4B0 {listing.price} ILS/month")
+        lines.append(f"\U0001F4B0 {listing.price} ILS")
+    else:
+        lines.append("\U0001F4B0 Price not listed")
     if listing.rooms is not None:
         lines.append(f"\U0001F6CF️ {listing.rooms} rooms")
     if listing.roommates is not None:
@@ -60,6 +65,10 @@ def format_alert(listing: Listing, profile: SearchConfig, score: int) -> str:
         lines.append(f"\U0001F6BF {listing.toilets} bathrooms")
     if listing.available_rooms is not None:
         lines.append(f"\U0001F6AA {listing.available_rooms} room(s) available now")
+    if listing.lease_start_date is not None:
+        lines.append(f"\U0001F4C5 from {listing.lease_start_date.isoformat()}")
+    if listing.lease_duration_days is not None:
+        lines.append(f"⏳ {listing.lease_duration_days} days")
 
     address = listing.address or (
         ", ".join(listing.neighborhoods_mentioned) if listing.neighborhoods_mentioned else None

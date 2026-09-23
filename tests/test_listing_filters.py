@@ -1,5 +1,7 @@
-from src.config import SearchConfig, ZoneConfig
-from src.listing_filters import matches
+from datetime import date, timedelta
+
+from src.config import SearchConfig, StayConfig, ZoneConfig
+from src.listing_filters import _resolve_dates, matches
 from src.listing_models import Listing
 
 
@@ -185,3 +187,127 @@ def test_single_vs_two_room_profiles_distinguish_a_listing():
     two_room_listing = make_listing(available_rooms=2)
     assert matches(two_room_listing, single) is False
     assert matches(two_room_listing, pair) is True
+
+
+TODAY = date(2026, 10, 1)
+
+
+def test_resolve_dates_from_start_and_end():
+    listing = make_listing(
+        lease_start_date=date(2026, 11, 1), lease_end_date=date(2026, 11, 15)
+    )
+    start, duration = _resolve_dates(listing)
+    assert start == date(2026, 11, 1)
+    assert duration == 14
+
+
+def test_resolve_dates_from_start_and_explicit_duration():
+    listing = make_listing(lease_start_date=date(2026, 11, 1), lease_duration_days=14)
+    start, duration = _resolve_dates(listing)
+    assert start == date(2026, 11, 1)
+    assert duration == 14
+
+
+def test_resolve_dates_from_duration_only():
+    listing = make_listing(lease_duration_days=14)
+    start, duration = _resolve_dates(listing)
+    assert start is None
+    assert duration == 14
+
+
+def test_resolve_dates_none_without_any_date_info():
+    listing = make_listing()
+    assert _resolve_dates(listing) == (None, None)
+
+
+def test_stay_gate_is_skipped_when_no_stay_config_given():
+    # Existing behavior (no stay_cfg) must be completely unaffected — a
+    # listing with no date info at all still matches, as it always has.
+    listing = make_listing()
+    cfg = SearchConfig()
+    assert matches(listing, cfg) is True
+
+
+def test_stay_gate_drops_a_listing_with_no_date_info():
+    listing = make_listing()
+    cfg = SearchConfig()
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is False
+
+
+def test_stay_gate_drops_a_stay_shorter_than_minimum():
+    listing = make_listing(lease_duration_days=10)
+    cfg = SearchConfig()
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is False
+
+
+def test_stay_gate_allows_a_stay_at_exactly_the_minimum():
+    listing = make_listing(lease_duration_days=14)
+    cfg = SearchConfig()
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is True
+
+
+def test_search_window_allows_a_start_date_inside_the_window():
+    listing = make_listing(lease_start_date=TODAY + timedelta(days=10), lease_duration_days=14)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is True
+
+
+def test_search_window_drops_a_start_date_beyond_the_window():
+    listing = make_listing(lease_start_date=TODAY + timedelta(days=30), lease_duration_days=14)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is False
+
+
+def test_search_window_drops_a_start_date_in_the_past():
+    listing = make_listing(lease_start_date=TODAY - timedelta(days=1), lease_duration_days=14)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is False
+
+
+def test_search_window_is_skipped_for_a_duration_only_listing():
+    # No resolvable start date, but it already satisfied the hard
+    # dates-required gate via an explicit duration — the window check
+    # only applies when a start date is actually known.
+    listing = make_listing(lease_duration_days=14)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, SearchConfig(), stay_cfg=stay, today=TODAY) is True
+
+
+def test_price_is_prorated_down_for_a_short_stay():
+    # 15 days = half a month: budget 2700-3600 prorates to 1350-1800.
+    listing = make_listing(price=1600, lease_duration_days=15)
+    cfg = SearchConfig(price_min=2700, price_max=3600)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is True
+    # The same listing against the RAW (unprorated) range would be
+    # wrongly rejected — proving proration is actually doing something.
+    assert matches(listing, cfg) is False
+
+
+def test_price_proration_still_rejects_outside_the_prorated_range():
+    listing = make_listing(price=1000, lease_duration_days=15)  # below prorated 1350
+    cfg = SearchConfig(price_min=2700, price_max=3600)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is False
+
+
+def test_price_is_not_prorated_for_a_month_long_stay():
+    listing = make_listing(price=3600, lease_duration_days=45)  # factor capped at 1.0
+    cfg = SearchConfig(price_min=2700, price_max=3600)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is True
+
+    over_budget = make_listing(price=3700, lease_duration_days=45)
+    assert matches(over_budget, cfg, stay_cfg=stay, today=TODAY) is False
+
+
+def test_missing_price_still_passes_with_stay_config_given():
+    # Missing price stays soft-optional even with the stay gate active —
+    # only the date/duration requirement is hard.
+    listing = make_listing(price=None, lease_duration_days=14)
+    cfg = SearchConfig(price_min=2700, price_max=3600)
+    stay = StayConfig(min_days=14, search_window_days=21)
+    assert matches(listing, cfg, stay_cfg=stay, today=TODAY) is True

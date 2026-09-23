@@ -17,7 +17,8 @@ SERVICE_ACCOUNT_PATH = (
 )
 HEADER = [
     "post_url", "group", "price", "rooms", "roommates", "toilets",
-    "suitable_for", "address", "phone", "distance_m", "score", "summary",
+    "suitable_for", "address", "phone", "lease_start", "stay_days",
+    "distance_m", "score", "summary",
 ]
 SCORE_COLUMN = HEADER.index("score") + 1  # 1-based, for Worksheet.sort()
 
@@ -28,6 +29,11 @@ def _suitable_for(available_rooms: int | None) -> str:
     if available_rooms == 1:
         return "1 person"
     return f"{available_rooms} people"
+
+
+def _price_cell(price: int | None) -> str | int:
+    return price if price is not None else "not listed"
+
 
 _sheet = None
 _checked = False
@@ -82,13 +88,15 @@ def save_listing(listing: Listing) -> None:
             [
                 listing.post_url,
                 listing.group_name,
-                listing.price,
+                _price_cell(listing.price),
                 listing.rooms,
                 listing.roommates,
                 listing.toilets,
                 _suitable_for(listing.available_rooms),
                 listing.address,
                 listing.phone,
+                listing.lease_start_date.isoformat() if listing.lease_start_date else "",
+                listing.lease_duration_days,
                 listing.distance_m,
                 listing.score,
                 listing.summary,

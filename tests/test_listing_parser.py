@@ -1,7 +1,12 @@
+from datetime import date
+
 from src.listing_parser import (
     _extract_address,
     _extract_available_rooms,
+    _extract_duration_days,
+    _extract_lease_dates,
     _extract_phone,
+    _parse_date_token,
     is_offer_listing,
     parse_listing,
 )
@@ -166,3 +171,71 @@ def test_parse_listing_populates_available_rooms():
         known_neighborhoods=[],
     )
     assert listing.available_rooms == 2
+
+
+def test_extract_duration_days_from_word_phrase():
+    assert _extract_duration_days("סאבלט לתקופה של שבועיים") == 14
+    assert _extract_duration_days("סאבלט לתקופה של שבוע") == 7
+    assert _extract_duration_days("סאבלט לחודש") == 30
+
+
+def test_extract_duration_days_from_explicit_number():
+    assert _extract_duration_days("סאבלט ל-10 ימים") == 10
+    assert _extract_duration_days("סאבלט ל-3 שבועות") == 21
+    assert _extract_duration_days("סאבלט ל-2 חודשים") == 60
+
+
+def test_extract_duration_days_none_without_a_phrase():
+    assert _extract_duration_days("סאבלט בפלורנטין, 4500 שקל") is None
+
+
+def test_parse_date_token_infers_next_year_when_date_has_passed():
+    today = date(2026, 10, 1)
+    # Jan 1 has already passed relative to Oct 1 -> next year.
+    assert _parse_date_token("1.1", today) == date(2027, 1, 1)
+
+
+def test_parse_date_token_uses_this_year_when_date_is_ahead():
+    today = date(2026, 10, 1)
+    assert _parse_date_token("15.11", today) == date(2026, 11, 15)
+
+
+def test_parse_date_token_respects_explicit_year():
+    assert _parse_date_token("15.11.2027", date(2026, 10, 1)) == date(2027, 11, 15)
+
+
+def test_parse_date_token_rejects_invalid_dates():
+    assert _parse_date_token("40.13", date(2026, 10, 1)) is None
+    assert _parse_date_token("not-a-date", date(2026, 10, 1)) is None
+
+
+def test_extract_lease_dates_reads_a_date_range():
+    today = date(2026, 10, 1)
+    start, end, duration = _extract_lease_dates("הדירה פנויה מ-1.11 עד 20.11", today)
+    assert start == date(2026, 11, 1)
+    assert end == date(2026, 11, 20)
+    assert duration is None
+
+
+def test_extract_lease_dates_reads_a_bare_start_date():
+    today = date(2026, 10, 1)
+    start, end, duration = _extract_lease_dates("הדירה פנויה מ-15.11 לתקופה של שבועיים", today)
+    assert start == date(2026, 11, 15)
+    assert end is None
+    assert duration == 14
+
+
+def test_extract_lease_dates_returns_all_none_without_any_date_info():
+    start, end, duration = _extract_lease_dates("סאבלט בפלורנטין, 4500 שקל")
+    assert (start, end, duration) == (None, None, None)
+
+
+def test_parse_listing_populates_lease_dates():
+    listing = parse_listing(
+        "הדירה פנויה מ-1.11 עד 20.11, 4500 שקל",
+        post_url="https://facebook.com/groups/1/posts/9",
+        group_name="Secret Tel Aviv",
+        known_neighborhoods=[],
+    )
+    assert listing.lease_start_date is not None
+    assert listing.lease_end_date is not None

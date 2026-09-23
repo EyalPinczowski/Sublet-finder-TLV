@@ -46,6 +46,15 @@ _SYSTEM_PROMPT = """אתה מנתח מודעות סאבלט/שכירות דיר�
 - toilets = מספר חדרי השירותים/אמבטיות.
 - separate_toilet_shower = true אם מצוין שהשירותים נפרדים מהמקלחת.
 - contact_phone = מספר טלפון או קישור וואטסאפ ליצירת קשר, אם מופיע.
+- lease_start_date = מתי ניתן להיכנס לדירה, כתאריך בפורמט YYYY-MM-DD. חשב
+  תאריכים יחסיים ("מיידי", "מחר", "מ-1.11" ללא שנה) לפי התאריך של היום
+  שניתן לך למטה. אם לא מוזכר תאריך כניסה כלל — null.
+- lease_end_date = תאריך היציאה/סיום השכירות, YYYY-MM-DD, רק אם מוזכר
+  תאריך סיום מפורש (למשל "עד 20.12" או "מ-1.11 עד 20.11"). אחרת null.
+- lease_duration_days = משך השכירות בימים, רק אם מוזכרת תקופה מפורשת
+  במילים ("שבועיים", "לחודש", "ל-10 ימים") ואין תאריך סיום מפורש (אם יש גם
+  תאריך סיום וגם תיאור תקופה, החזר את lease_end_date ואת lease_duration_days
+  כ-null — החישוב ייעשה מהתאריכים). אחרת null.
 - summary = משפט תקציר קצר אחד באנגלית או עברית.
 החזר JSON בלבד."""
 
@@ -60,6 +69,9 @@ class ListingExtract(BaseModel):
     toilets: Optional[int] = None
     separate_toilet_shower: Optional[bool] = None
     contact_phone: Optional[str] = None
+    lease_start_date: Optional[str] = None  # ISO YYYY-MM-DD
+    lease_end_date: Optional[str] = None  # ISO YYYY-MM-DD
+    lease_duration_days: Optional[int] = None
     summary: Optional[str] = None
 
 
@@ -120,13 +132,26 @@ def _extract_gemini(text: str, config: LLMConfig) -> ListingExtract:
     client = genai.Client(api_key=config.api_key)
     resp = client.models.generate_content(
         model="gemini-flash-lite-latest",
-        contents=[_SYSTEM_PROMPT, "\n\nהפוסט:\n" + text],
+        contents=[
+            _SYSTEM_PROMPT,
+            f"\n\nהיום התאריך {_today()}.",
+            "\n\nהפוסט:\n" + text,
+        ],
         config={
             "response_mime_type": "application/json",
             "response_schema": ListingExtract,
         },
     )
     return ListingExtract.model_validate_json(resp.text)
+
+
+def _parse_date(value: Optional[str]):
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None  # the model returned something malformed — don't guess
 
 
 def extract(
@@ -168,4 +193,7 @@ def extract(
         phone=e.contact_phone,
         images=images or [],
         summary=e.summary,
+        lease_start_date=_parse_date(e.lease_start_date),
+        lease_end_date=_parse_date(e.lease_end_date),
+        lease_duration_days=e.lease_duration_days,
     )

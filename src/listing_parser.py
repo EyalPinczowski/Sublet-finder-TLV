@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from .listing_models import Listing
 
@@ -62,6 +63,81 @@ def _extract_available_rooms(text: str) -> int | None:
     if _AVAILABLE_ROOMS_ONE_RE.search(text):
         return 1
     return None
+
+
+# Lease duration/dates — best-effort, like the rest of this fallback parser
+# (the LLM path handles this far more reliably, including relative phrases
+# like "מיידי" this regex approach doesn't attempt at all).
+_DURATION_WORD_DAYS = {"שבועיים": 14, "שבוע": 7, "חודשיים": 60, "חודש": 30}
+_DURATION_WORD_RE = re.compile(
+    "|".join(sorted(_DURATION_WORD_DAYS, key=len, reverse=True))
+)
+_DURATION_NUM_RE = re.compile(r"(\d+)\s*(ימים|יום|שבועות|שבוע|חודשים|חודש)")
+_DURATION_UNIT_DAYS = {"יום": 1, "ימים": 1, "שבוע": 7, "שבועות": 7, "חודש": 30, "חודשים": 30}
+
+_DATE_TOKEN = r"\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?"
+_DATE_RANGE_RE = re.compile(rf"(?:מ-?)?({_DATE_TOKEN})\s*(?:-|עד|–)\s*({_DATE_TOKEN})")
+_START_DATE_RE = re.compile(rf"(?:מ-|החל מ-?|פנוי מ-?|כניסה מ-?)\s*({_DATE_TOKEN})")
+
+
+def _extract_duration_days(text: str) -> int | None:
+    match = _DURATION_NUM_RE.search(text)
+    if match:
+        return int(match.group(1)) * _DURATION_UNIT_DAYS[match.group(2)]
+    match = _DURATION_WORD_RE.search(text)
+    if match:
+        return _DURATION_WORD_DAYS[match.group(0)]
+    return None
+
+
+def _resolve_year(day: int, month: int, today: date) -> int:
+    """A bare DD.MM with no year: assume this year, unless that date has
+    already passed — then assume next year (sublets are near-term)."""
+    try:
+        candidate = date(today.year, month, day)
+    except ValueError:
+        return today.year
+    return today.year if candidate >= today else today.year + 1
+
+
+def _parse_date_token(token: str, today: date) -> date | None:
+    parts = token.split(".") if "." in token else token.split("/")
+    if len(parts) < 2:
+        return None
+    try:
+        day, month = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    if len(parts) > 2 and parts[2]:
+        year = int(parts[2])
+        if year < 100:
+            year += 2000
+    else:
+        year = _resolve_year(day, month, today)
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _extract_lease_dates(
+    text: str, today: date | None = None
+) -> tuple[date | None, date | None, int | None]:
+    """(start_date, end_date, duration_days) best-effort from the post
+    text — whichever of a date range, a bare start date, or a stated
+    duration is present. listing_filters._resolve_dates reconciles
+    whatever combination this (or the LLM path) returns."""
+    today = today or date.today()
+    range_match = _DATE_RANGE_RE.search(text)
+    if range_match:
+        start = _parse_date_token(range_match.group(1), today)
+        end = _parse_date_token(range_match.group(2), today)
+        return start, end, None
+    start_match = _START_DATE_RE.search(text)
+    start = _parse_date_token(start_match.group(1), today) if start_match else None
+    return start, None, _extract_duration_days(text)
 
 
 # Israeli mobile numbers, tolerating spaces/dots/dashes and a +972/972/0
@@ -164,6 +240,7 @@ def parse_listing(
     images: list[str] | None = None,
 ) -> Listing:
     address = _extract_address(text)
+    start, end, duration = _extract_lease_dates(text)
     return Listing(
         post_url=post_url,
         group_name=group_name,
@@ -179,4 +256,7 @@ def parse_listing(
         phone=_extract_phone(text),
         images=images or [],
         summary=_summarize(text),
+        lease_start_date=start,
+        lease_end_date=end,
+        lease_duration_days=duration,
     )

@@ -110,7 +110,9 @@ def _scan(config: Config, args) -> None:
                 # profiles' ranges overlap), each scored on that profile's
                 # own criteria (different price ranges score differently).
                 matched_profiles = [
-                    p for p in config.searches if matches_search(listing, p, config.zone)
+                    p
+                    for p in config.searches
+                    if matches_search(listing, p, config.zone, config.stay)
                 ]
                 scores = {p.name: scoring.score(listing, p, config.zone) for p in matched_profiles}
                 if matched_profiles:

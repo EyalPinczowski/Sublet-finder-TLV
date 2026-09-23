@@ -1,3 +1,4 @@
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 from src.config import SearchConfig
@@ -54,6 +55,27 @@ def test_format_alert_shows_profile_emoji_and_name():
 def test_format_alert_shows_available_rooms():
     listing = make_listing(available_rooms=2)
     assert "2 room(s) available now" in format_alert(listing, make_profile(), 80)
+
+
+def test_format_alert_shows_price_not_listed_when_missing():
+    listing = make_listing(price=None)
+    text = format_alert(listing, make_profile(), 80)
+    assert "Price not listed" in text
+    assert "None ILS" not in text
+
+
+def test_format_alert_shows_price_when_known():
+    listing = make_listing(price=3300)
+    text = format_alert(listing, make_profile(), 80)
+    assert "3300 ILS" in text
+    assert "Price not listed" not in text
+
+
+def test_format_alert_shows_lease_start_and_duration():
+    listing = make_listing(lease_start_date=date(2026, 11, 1), lease_duration_days=14)
+    text = format_alert(listing, make_profile(), 80)
+    assert "2026-11-01" in text
+    assert "14 days" in text
 
 
 def test_format_alert_uses_given_score_not_listing_score():

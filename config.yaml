@@ -42,6 +42,17 @@ zone:
   target_lon: 34.7742
   max_distance_meters: 1000
 
+# How long a stay must be, and how soon it must start — global, not
+# per-profile (this is about when you can personally move, not room count).
+# A listing needs SOME date/duration info to be considered at all (a
+# deliberate exception to this tool's usual "missing data passes" rule —
+# see README "Stay length and dates"); one with no dates mentioned is
+# dropped rather than shown as a maybe.
+stay:
+  min_days: 14
+  # Only listings whose lease starts within [today, today + this] count.
+  search_window_days: 21
+
 # Your criteria for the apartment(s) you're looking to sublet FROM someone —
 # one or more NAMED profiles, each checked against every post in the same
 # scan (no separate runs needed). A post can match more than one profile; it
@@ -56,7 +67,11 @@ zone:
 searches:
   - name: "single room"
     emoji: "\U0001F7E2"  # green
-    price_min: 2500
+    # Monthly budget. For a stay shorter than 30 days, this is prorated
+    # down (min * duration_days/30 .. max * duration_days/30) and compared
+    # against the post's price, which is treated as the TOTAL for its
+    # stated period rather than a monthly rate — see README.
+    price_min: 2700
     price_max: 3600
     min_rooms: null
     min_available_rooms: 1
@@ -88,9 +103,8 @@ searches:
 
   - name: "two rooms (with a friend)"
     emoji: "\U0001F535"  # blue
-    # Roughly double the single-room budget, since you'd be splitting a
-    # bigger unit between two incoming roommates — adjust to taste.
-    price_min: 5000
+    # Double the single-room budget (same proration rule as above).
+    price_min: 5400
     price_max: 7200
     min_rooms: null
     min_available_rooms: 2

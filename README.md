@@ -111,14 +111,14 @@ searches:
     emoji: "🟢"
     min_available_rooms: 1
     max_available_rooms: 1
-    price_min: 2500
+    price_min: 2700
     price_max: 3600
     # ... neighborhoods, max_roommates, min_bathrooms, etc. — same fields
     # as before, just nested under a named profile now.
   - name: "two rooms (with a friend)"
     emoji: "🔵"
     min_available_rooms: 2
-    price_min: 5000
+    price_min: 5400
     price_max: 7200
 ```
 
@@ -141,6 +141,48 @@ which profile(s) each listing matched too.
 Add, remove, rename, or retune profiles freely — a single legacy `search:`
 block (no `searches:` list) still works and is treated as one profile named
 `"default"`.
+
+### Stay length and dates
+
+`config.yaml`'s top-level `stay:` block (shared across every profile — it's
+about when *you* can move, not room count) requires a minimum stay and a
+rolling window for when the lease must start:
+
+```yaml
+stay:
+  min_days: 14                # anything shorter is dropped
+  search_window_days: 21      # only listings starting today..+21 days
+```
+
+**A listing needs *some* date/duration info to be considered at all — a
+deliberate exception to this tool's usual rule that missing data passes a
+filter.** Every other field (price, rooms, bathrooms, …) shows up as a
+match when unknown; a post that says nothing about when it starts or how
+long it runs is dropped outright, since there's nothing to check the
+minimum-stay and search-window rules against. This is enforced in
+`src/listing_filters.matches()`, clearly marked as the one hard gate in an
+otherwise soft-filter function. A post stating only a duration ("שבועיים",
+no specific start date) still passes the window check — you said dates
+"could be... a period of time," so a bare duration is enough to clear the
+hard gate, it just can't be checked against the *window* specifically.
+
+**Price proration**: your `price_min`/`price_max` are a monthly budget.
+When a listing's stay is under 30 days, that budget is prorated down
+(`price * duration_days/30`) before comparing it against the post's price
+— which is treated as the **total for its stated period**, not a monthly
+rate, for a short-term post. A stay of a month or longer is never
+prorated *up*; ordinary monthly-rate listings are unaffected. Dates are
+extracted the same way as everything else — Gemini gets today's date in
+its prompt so it can resolve "מיידי"/bare `DD.MM`/date ranges into real
+dates; the regex fallback handles a handful of common phrasings
+(`שבוע`/`שבועיים`/`חודש`, `DD.MM`–`DD.MM` ranges, `X ימים`/`שבועות`/`חודשים`)
+with a year inferred from whether the date has already passed this year.
+
+A missing price is still shown explicitly, everywhere (the Telegram alert,
+the Sheets row, the dashboard, the published snapshot) — an
+otherwise-matching listing with no stated price says "Price not listed"
+rather than silently omitting the line, so it doesn't look identical to
+one that was simply cut off.
 
 ## Usage
 
@@ -210,8 +252,9 @@ network. Read this before using it:
 Mirrors every matched listing into a shared Sheet you can sort/filter by
 hand — additive to SQLite, disabled until set up. Includes a `suitable_for`
 column ("1 person" / "2 people" / …) derived from the post's
-`available_rooms`, so single-room and two-room matches are easy to tell
-apart at a glance there too.
+`available_rooms`, plus `lease_start`/`stay_days` columns, so you can sort
+and filter by move-in date and stay length right there too. A missing
+price shows as the text "not listed" rather than a blank cell.
 
 1. In **Google Cloud Console**: create a project → enable the **Google
    Sheets API** → create a **service account** → download its JSON key.
@@ -253,7 +296,11 @@ Nominatim, or Google Sheets calls, and they never touch `data/listings.db`
 - **The regex/keyword parser (`src/listing_parser.py`) is a fallback, not
   a language model** — used automatically whenever the LLM path isn't
   available. It will miss some genuine listings and occasionally flag a
-  false positive; the address/phone/`available_rooms` fields it recovers in
-  particular are best-effort (`available_rooms` only catches a handful of
-  common Hebrew phrasings). Tune a profile's `excluded_keywords` to cut
-  down on noise, or set `GEMINI_API_KEY` for meaningfully better extraction.
+  false positive; the address/phone/`available_rooms`/date fields it
+  recovers in particular are best-effort (each only catches a handful of
+  common Hebrew phrasings). Since dates are now a *hard* requirement (see
+  "Stay length and dates" above), this fallback path will drop more
+  genuine listings than the LLM path would, on posts phrasing their dates
+  in ways its regexes don't cover. Tune a profile's `excluded_keywords` to
+  cut down on noise, or set `GEMINI_API_KEY` for meaningfully better
+  extraction across the board.

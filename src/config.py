@@ -82,6 +82,17 @@ class ZoneConfig:
 
 
 @dataclass
+class StayConfig:
+    """How long a stay must be, and how soon it must start — global, not
+    per-profile, since these are about when you can personally move, not
+    about room count."""
+
+    min_days: int = 14
+    # Only listings whose lease starts within [today, today + this] count.
+    search_window_days: int = 21
+
+
+@dataclass
 class Config:
     facebook_groups: list[FacebookGroup]
     posts_per_group: int
@@ -89,6 +100,7 @@ class Config:
     telegram: TelegramConfig | None
     llm: LLMConfig
     zone: ZoneConfig
+    stay: StayConfig
 
     @property
     def all_neighborhoods(self) -> list[str]:
@@ -153,6 +165,12 @@ def load_config(path: Path | None = None) -> Config:
         max_distance_meters=zone_raw.get("max_distance_meters", 1000),
     )
 
+    stay_raw = raw.get("stay") or {}
+    stay = StayConfig(
+        min_days=stay_raw.get("min_days", 14),
+        search_window_days=stay_raw.get("search_window_days", 21),
+    )
+
     config = Config(
         facebook_groups=[FacebookGroup(**g) for g in raw["facebook_groups"]],
         posts_per_group=raw["posts_per_group"],
@@ -160,6 +178,7 @@ def load_config(path: Path | None = None) -> Config:
         telegram=telegram,
         llm=llm,
         zone=zone,
+        stay=stay,
     )
     validate(config)
     return config
@@ -210,5 +229,11 @@ def validate(config: Config) -> None:
         )
     if config.llm.daily_budget < 0:
         problems.append(f"llm.daily_budget ({config.llm.daily_budget}) must be >= 0")
+    if config.stay.min_days <= 0:
+        problems.append(f"stay.min_days ({config.stay.min_days}) must be > 0")
+    if config.stay.search_window_days <= 0:
+        problems.append(
+            f"stay.search_window_days ({config.stay.search_window_days}) must be > 0"
+        )
     if problems:
         raise SystemExit("config error — fix config.yaml:\n  - " + "\n  - ".join(problems))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 
 
 @dataclass
@@ -35,3 +36,11 @@ class Listing:
     distance_m: float | None = None
     # Filled in by src/scoring.py.
     score: int | None = None
+    # Lease timing, as extracted from the post (whatever combination it
+    # stated — a date range, a start date + duration, or a bare duration).
+    # listing_filters._resolve_dates fills in lease_duration_days from
+    # whichever of these was actually extracted, and is the single source
+    # of truth for both the min-stay and search-window checks.
+    lease_start_date: date | None = None
+    lease_end_date: date | None = None
+    lease_duration_days: int | None = None

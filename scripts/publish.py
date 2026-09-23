@@ -39,7 +39,8 @@ def _card(conn, row) -> str:
     profiles = ", ".join(row.profile_names()) or "?"
     return (
         f'<div class="card">{img_html}'
-        f"<h3>{row.price or '?'} ILS &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>"
+        f"<h3>{f'{row.price} ILS' if row.price is not None else 'Price not listed'} "
+        f"&middot; {row.rooms or '?'} rooms &middot; score {score}</h3>"
         f'<p class="matched">Matched: {html.escape(profiles)}</p>'
         f'<p class="addr">{html.escape(row.address or row.neighborhoods or "area unknown")}</p>'
         f"<p>{html.escape(row.summary or row.raw_text[:200])}</p>"

@@ -52,10 +52,11 @@ def _card(conn, row, token: str) -> str:
     )
     post_q = quote(row.post_url, safe="")
     profiles = ", ".join(row.profile_names()) or "?"
+    price = f"{row.price} ILS" if row.price is not None else "Price not listed"
     return f"""
     <div class="card">
       {img_html}
-      <h3>{row.price or '?'} ILS &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>
+      <h3>{price} &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>
       <p class="matched">Matched: {html.escape(profiles)}</p>
       <p class="addr">{html.escape(row.address or row.neighborhoods or 'area unknown')}</p>
       <p>{html.escape(row.summary or row.raw_text[:200])}</p>

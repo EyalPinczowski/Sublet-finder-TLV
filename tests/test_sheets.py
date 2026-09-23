@@ -130,3 +130,49 @@ def test_save_listing_writes_suitable_for_column(monkeypatch, tmp_path):
 
     row = ws.append_row.call_args.args[0]
     assert row[sheets.HEADER.index("suitable_for")] == "2 people"
+
+
+def test_price_cell_shows_not_listed_when_missing():
+    assert sheets._price_cell(None) == "not listed"
+
+
+def test_price_cell_shows_the_number_when_known():
+    assert sheets._price_cell(3300) == 3300
+
+
+def test_save_listing_writes_not_listed_for_missing_price(monkeypatch, tmp_path):
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing(price=None))
+
+    row = ws.append_row.call_args.args[0]
+    assert row[sheets.HEADER.index("price")] == "not listed"
+
+
+def test_save_listing_writes_lease_start_and_stay_days(monkeypatch, tmp_path):
+    from datetime import date
+
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    listing = make_listing(lease_start_date=date(2026, 11, 1), lease_duration_days=14)
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(listing)
+
+    row = ws.append_row.call_args.args[0]
+    assert row[sheets.HEADER.index("lease_start")] == "2026-11-01"
+    assert row[sheets.HEADER.index("stay_days")] == 14

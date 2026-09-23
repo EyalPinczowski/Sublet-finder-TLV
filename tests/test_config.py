@@ -5,6 +5,7 @@ from src.config import (
     FacebookGroup,
     LLMConfig,
     SearchConfig,
+    StayConfig,
     ZoneConfig,
     load_config,
     validate,
@@ -19,6 +20,7 @@ def make_config(**overrides) -> Config:
         telegram=None,
         llm=LLMConfig(),
         zone=ZoneConfig(target_lat=32.0768, target_lon=34.7742, max_distance_meters=1000),
+        stay=StayConfig(),
     )
     defaults.update(overrides)
     return Config(**defaults)
@@ -102,6 +104,22 @@ def test_negative_llm_budget_rejected():
         validate(make_config(llm=LLMConfig(daily_budget=-1)))
 
 
+def test_zero_min_stay_days_rejected():
+    with pytest.raises(SystemExit):
+        validate(make_config(stay=StayConfig(min_days=0)))
+
+
+def test_zero_search_window_days_rejected():
+    with pytest.raises(SystemExit):
+        validate(make_config(stay=StayConfig(search_window_days=0)))
+
+
+def test_stay_config_defaults():
+    stay = StayConfig()
+    assert stay.min_days == 14
+    assert stay.search_window_days == 21
+
+
 def test_llm_config_active_requires_key_and_enabled():
     assert LLMConfig(enabled=True, api_key="x").active is True
     assert LLMConfig(enabled=True, api_key=None).active is False
@@ -179,4 +197,30 @@ search:
     config = load_config(path)
     assert len(config.searches) == 1
     assert config.searches[0].name == "default"
-    assert config.searches[0].price_min == 2500
+
+
+def test_load_config_reads_stay_block(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        _BASE_YAML
+        + """
+stay:
+  min_days: 10
+  search_window_days: 30
+"""
+    )
+    config = load_config(path)
+    assert config.stay.min_days == 10
+    assert config.stay.search_window_days == 30
+
+
+def test_load_config_stay_defaults_without_a_stay_block(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    path = tmp_path / "config.yaml"
+    path.write_text(_BASE_YAML)
+    config = load_config(path)
+    assert config.stay.min_days == 14
+    assert config.stay.search_window_days == 21

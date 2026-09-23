@@ -1,23 +1,64 @@
 from __future__ import annotations
 
-from .config import SearchConfig, ZoneConfig
+from datetime import date, timedelta
+
+from .config import SearchConfig, StayConfig, ZoneConfig
 from .listing_models import Listing
 from .zones import within_zone
 
 
-def matches(listing: Listing, search_cfg: SearchConfig, zone_cfg: ZoneConfig | None = None) -> bool:
-    if (
-        search_cfg.price_max is not None
-        and listing.price is not None
-        and listing.price > search_cfg.price_max
-    ):
+def _resolve_dates(listing: Listing) -> tuple[date | None, int | None]:
+    """(start_date, duration_days) reconciled from whatever combination of
+    lease_start_date/lease_end_date/lease_duration_days was actually
+    extracted (a date range, a start date + stated duration, or a bare
+    duration) — the single place this logic lives, so the LLM and regex
+    extraction paths and this filter never disagree on it."""
+    start = listing.lease_start_date
+    duration = listing.lease_duration_days
+    if duration is None and start is not None and listing.lease_end_date is not None:
+        duration = (listing.lease_end_date - start).days
+    return start, duration
+
+
+def matches(
+    listing: Listing,
+    search_cfg: SearchConfig,
+    zone_cfg: ZoneConfig | None = None,
+    stay_cfg: StayConfig | None = None,
+    today: date | None = None,
+) -> bool:
+    price_min, price_max = search_cfg.price_min, search_cfg.price_max
+
+    if stay_cfg is not None:
+        start, duration = _resolve_dates(listing)
+        # HARD gate — unlike every other field in this function, dates are
+        # REQUIRED, not soft-optional: a listing with no date/duration info
+        # at all is dropped rather than shown as a maybe. Deliberate
+        # exception to this tool's usual "missing data passes" rule; see
+        # README "Stay length and dates".
+        if duration is None:
+            return False
+        if duration < stay_cfg.min_days:
+            return False
+        if start is not None:
+            window_start = today or date.today()
+            window_end = window_start + timedelta(days=stay_cfg.search_window_days)
+            if not (window_start <= start <= window_end):
+                return False
+        # Prorate the monthly budget down for a stay under a month, since
+        # listing.price for a short sublet is the TOTAL for its stated
+        # period, not a monthly rate. Never prorate UP for a longer stay —
+        # normal monthly-rate listings are unaffected.
+        factor = min(duration / 30, 1.0)
+        if price_min is not None:
+            price_min = price_min * factor
+        if price_max is not None:
+            price_max = price_max * factor
+
+    if price_max is not None and listing.price is not None and listing.price > price_max:
         return False
 
-    if (
-        search_cfg.price_min is not None
-        and listing.price is not None
-        and listing.price < search_cfg.price_min
-    ):
+    if price_min is not None and listing.price is not None and listing.price < price_min:
         return False
 
     if (
