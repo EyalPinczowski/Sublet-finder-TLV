@@ -41,11 +41,11 @@ CREATE TABLE IF NOT EXISTS listings (
     notified INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_listings_content_hash ON listings(content_hash);
--- idx_listings_phone_hash is created in _ensure_schema_upgrades() below,
--- not here — on a pre-existing DB from before phone_hash existed, this
--- executescript() runs BEFORE that migration, so an index on the column
--- here would fail with "no such column: phone_hash".
+-- idx_listings_content_hash/idx_listings_phone_hash are created in
+-- _ensure_schema_upgrades() below, not here — on a pre-existing DB from
+-- before that column existed, this executescript() runs BEFORE that
+-- migration adds it, so an index on the column here would fail with
+-- "no such column".
 
 -- Per-user ⭐ save / 🗑 dismiss votes from Telegram/dashboard buttons. A save
 -- nudges the listing's effective score; a dismiss hides it without deleting
@@ -112,17 +112,53 @@ class ListingRow:
         return [n for n in (self.matched_profiles or "").split(", ") if n]
 
 
+# Every listings column beyond the original id/post_url/group_name/raw_text
+# core, in the same order they were added to SCHEMA over time. A DB created
+# before one of these existed needs it ALTER-ed in by hand, since CREATE
+# TABLE IF NOT EXISTS is a no-op against an already-existing table — this
+# used to special-case just phone_hash (the most recent addition at the
+# time), which silently broke insert_listing() on any DB old enough to
+# predate an EARLIER addition like available_rooms instead.
+_LISTINGS_COLUMN_DEFS: list[tuple[str, str]] = [
+    ("price", "INTEGER"),
+    ("rooms", "REAL"),
+    ("neighborhoods", "TEXT"),
+    ("roommates", "INTEGER"),
+    ("toilets", "INTEGER"),
+    ("available_rooms", "INTEGER"),
+    ("lease_start_date", "TEXT"),
+    ("lease_end_date", "TEXT"),
+    ("lease_duration_days", "INTEGER"),
+    ("address", "TEXT"),
+    ("phone", "TEXT"),
+    ("images", "TEXT"),
+    ("summary", "TEXT"),
+    ("lat", "REAL"),
+    ("lon", "REAL"),
+    ("distance_m", "REAL"),
+    ("score", "INTEGER"),
+    ("content_hash", "TEXT"),
+    ("phone_hash", "TEXT"),
+    ("matched", "INTEGER NOT NULL DEFAULT 0"),
+    ("matched_profiles", "TEXT"),
+    ("notified", "INTEGER NOT NULL DEFAULT 0"),
+    ("created_at", "TEXT NOT NULL DEFAULT (datetime('now'))"),
+]
+
+
 def _ensure_schema_upgrades(conn) -> None:
     """SCHEMA's CREATE TABLE IF NOT EXISTS is a no-op against a DB that
-    already has the `listings` table from before a new column existed —
-    this adds any such column by hand so an existing data/listings.db
-    (already populated with real matches) doesn't break on the next
-    insert_listing() call."""
+    already has the `listings` table from before a newer column existed —
+    this adds any/every such column by hand so an existing data/listings.db
+    (already populated with real matches), however old, doesn't break on
+    the next insert_listing() call."""
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(listings)")}
-    if "phone_hash" not in cols:
-        conn.execute("ALTER TABLE listings ADD COLUMN phone_hash TEXT")
-    # Safe to (re)create unconditionally: the column now exists either way
+    for name, coldef in _LISTINGS_COLUMN_DEFS:
+        if name not in cols:
+            conn.execute(f"ALTER TABLE listings ADD COLUMN {name} {coldef}")
+    # Safe to (re)create unconditionally: the columns now exist either way
     # (just added above, or already present from a fresh CREATE TABLE).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_content_hash ON listings(content_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_phone_hash ON listings(phone_hash)")
 
 

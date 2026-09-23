@@ -112,6 +112,41 @@ def test_connect_migrates_a_pre_existing_db_missing_phone_hash(isolated_db):
         assert len(store.list_listings(conn, matched_only=True)) == 1
 
 
+def test_connect_migrates_an_ancient_db_missing_many_columns(isolated_db):
+    """Regression test: _ensure_schema_upgrades used to special-case only
+    phone_hash (the most recent addition at the time), which meant a DB old
+    enough to predate an EARLIER addition like available_rooms still broke
+    insert_listing() with "no such column". A DB with only the very
+    original core columns must now be migrated to the full current schema
+    on connect(), not just have phone_hash bolted on."""
+    import sqlite3
+
+    conn = sqlite3.connect(store.DB_PATH)
+    conn.executescript(
+        """
+        CREATE TABLE listings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_url TEXT UNIQUE NOT NULL,
+            group_name TEXT NOT NULL,
+            raw_text TEXT NOT NULL,
+            matched INTEGER NOT NULL DEFAULT 0,
+            notified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    listing = make_listing(available_rooms=1, phone="050-2222222")
+    with store.connect() as conn:
+        listing_id = store.insert_listing(conn, listing, matched_profiles=["default"])
+        assert listing_id
+        row = store.list_listings(conn, matched_only=True)[0]
+        assert row.available_rooms == 1
+        assert row.phone_hash == store.phone_hash_key(listing)
+
+
 def test_mark_listing_dead_hides_it_like_a_dismiss(isolated_db):
     listing = make_listing()
     with store.connect() as conn:
