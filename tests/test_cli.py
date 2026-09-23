@@ -493,6 +493,68 @@ def test_scan_geocodes_when_cheap_filters_pass(isolated_db, monkeypatch):
     assert geocode_calls == [1]
 
 
+# --- cross-group dedup: the same apartment posted to 2 groups in one scan ---
+
+
+def test_scan_does_not_suggest_the_same_apartment_twice_across_groups(isolated_db, monkeypatch):
+    """The exact scenario a real repost looks like: someone posts the same
+    apartment to two different groups, worded slightly differently each
+    time ("רחוב דיזנגוף 120" vs "דיזנגוף 120, תל אביב") — content_hash_key's
+    normalization must still recognize them as the same listing, so it's
+    matched/notified once, not once per group."""
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(cli.random, "shuffle", lambda seq: None)  # deterministic order
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+    _patch_matches_everything(monkeypatch)
+
+    post_a = RawPost(post_url="https://fb.com/groups/1/posts/1", author="a", text="t")
+    post_b = RawPost(post_url="https://fb.com/groups/2/posts/2", author="a", text="t")
+    listing_a = Listing(
+        post_url=post_a.post_url,
+        group_name="g1",
+        raw_text="t",
+        price=4500,
+        rooms=2.0,
+        address="רחוב דיזנגוף 120",
+    )
+    listing_b = Listing(
+        post_url=post_b.post_url,
+        group_name="g2",
+        raw_text="t",
+        price=4500,
+        rooms=2.0,
+        address="דיזנגוף 120, תל אביב",
+    )
+
+    def fake_scrape(context, group, **kwargs):
+        return ([post_a], True) if group.name == "g1" else ([post_b], True)
+
+    def fake_extract(post, group_name, config):
+        return listing_a if post is post_a else listing_b
+
+    monkeypatch.setattr(cli, "scrape_group", fake_scrape)
+    monkeypatch.setattr(cli, "_extract_listing", fake_extract)
+
+    sent = []
+    monkeypatch.setattr(cli.telegram_notifier, "send_text", lambda *a, **k: sent.append(a[2]))
+
+    config = make_config(
+        telegram=_telegram_config(),
+        facebook_groups=[
+            FacebookGroup(name="g1", url="https://facebook.com/groups/1"),
+            FacebookGroup(name="g2", url="https://facebook.com/groups/2"),
+        ],
+    )
+    cli._scan(config, _Args())
+
+    with store.connect() as conn:
+        listings = store.list_listings(conn, matched_only=True)
+    assert len(listings) == 1  # the second post never got its own row
+    assert sent == ["✅ Scan complete — 1 new match."]
+
+
 # --- Telegram heartbeat ---
 
 

@@ -186,16 +186,59 @@ def listing_seen(conn, post_url: str) -> bool:
     return row is not None
 
 
+# Stripped before hashing an address — these are exactly the parts that
+# tend to vary between two independent write-ups of the SAME apartment
+# (posted to multiple groups, or re-extracted slightly differently by the
+# LLM/regex parser on each posting), so "רחוב דיזנגוף 120, תל אביב" and
+# "דיזנגוף 120" hash identically instead of looking like two different
+# addresses just because of a street-prefix word or a city-name suffix.
+_ADDRESS_CITY_SUFFIX_RE = re.compile(
+    r"[,\s]*(תל[\s\-]?אביב[\s\-]?יפו|תל[\s\-]?אביב|ת\"א|tel\s*aviv(\s*[\-,]?\s*yafo)?)\s*$",
+    re.IGNORECASE,
+)
+_ADDRESS_STREET_PREFIX_RE = re.compile(r"^(רחוב|רח['׳]?)\s+", re.IGNORECASE)
+
+
+def _normalize_address_for_hash(address: str) -> str:
+    """Used only for content_hash_key's fuzzy-repost matching — never for
+    display. See _ADDRESS_CITY_SUFFIX_RE/_ADDRESS_STREET_PREFIX_RE."""
+    text = address.strip().lower()
+    text = _ADDRESS_STREET_PREFIX_RE.sub("", text)
+    text = _ADDRESS_CITY_SUFFIX_RE.sub("", text)
+    text = re.sub(r"[.,;]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _round_price_for_hash(price: int | None) -> int | None:
+    """Rounded to the nearest 100 ILS before hashing — tolerates the kind
+    of small variance a repost across groups actually has (a minor price
+    tweak, or the LLM/regex extracting a slightly different figure from
+    two independently-written posts of the same listing) without being
+    loose enough to plausibly conflate two genuinely different
+    apartments."""
+    if price is None:
+        return None
+    return round(price / 100) * 100
+
+
 def content_hash_key(listing) -> str | None:
     """A fuzzy fallback identity from a listing's own content (address +
     price + rooms), for catching the same flat reposted under a different
     permalink/text — mirrors bgu-housing-bot's _content_hash_key. None when
     there's no address: price/rooms alone are far too common to treat as a
     duplicate signal, and without this every address-less listing would
-    hash identically and collapse into "duplicates" of the first one seen."""
+    hash identically and collapse into "duplicates" of the first one seen.
+
+    Address is normalized and price is rounded before hashing (see
+    _normalize_address_for_hash/_round_price_for_hash) so the same
+    apartment posted to two different groups — almost never worded or
+    re-extracted byte-for-byte identically — still hashes the same."""
     if not listing.address:
         return None
-    basis = f"{listing.address.strip().lower()}|{listing.price}|{listing.rooms}"
+    basis = (
+        f"{_normalize_address_for_hash(listing.address)}|"
+        f"{_round_price_for_hash(listing.price)}|{listing.rooms}"
+    )
     return "hash:" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
 
 
@@ -217,13 +260,14 @@ def phone_hash_key(listing) -> str | None:
     with different address text but the same contact number. None when
     there's no phone, for the same reason content_hash_key requires an
     address: price/rooms alone are far too common to treat as a duplicate
-    signal on their own."""
+    signal on their own. Price is rounded before hashing, same tolerance
+    and same reason as content_hash_key."""
     if not listing.phone:
         return None
     digits = re.sub(r"\D", "", listing.phone)
     if not digits:
         return None
-    basis = f"{digits}|{listing.price}|{listing.rooms}"
+    basis = f"{digits}|{_round_price_for_hash(listing.price)}|{listing.rooms}"
     return "phone:" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
 
 

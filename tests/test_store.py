@@ -31,6 +31,42 @@ def test_content_hash_key_differs_for_different_address():
     assert a != b
 
 
+def test_content_hash_key_ignores_street_prefix():
+    """"רחוב דיזנגוף 120" and "דיזנגוף 120" must hash the same — this is
+    exactly the kind of wording difference two independent posts of the
+    SAME apartment (one per group) commonly have."""
+    a = store.content_hash_key(make_listing(address="דיזנגוף 120"))
+    b = store.content_hash_key(make_listing(address="רחוב דיזנגוף 120"))
+    assert a == b
+
+
+def test_content_hash_key_ignores_city_name_suffix():
+    a = store.content_hash_key(make_listing(address="דיזנגוף 120"))
+    b = store.content_hash_key(make_listing(address="דיזנגוף 120, תל אביב"))
+    assert a == b
+
+
+def test_content_hash_key_ignores_small_price_variance():
+    """A repost's price sometimes extracts (or genuinely gets tweaked)
+    slightly differently — small variance within the same rounding bucket
+    must still hash the same."""
+    a = store.content_hash_key(make_listing(price=4480))
+    b = store.content_hash_key(make_listing(price=4520))
+    assert a == b
+
+
+def test_content_hash_key_still_differs_for_a_real_price_difference():
+    a = store.content_hash_key(make_listing(price=3500))
+    b = store.content_hash_key(make_listing(price=4500))
+    assert a != b
+
+
+def test_content_hash_key_still_differs_for_different_rooms():
+    a = store.content_hash_key(make_listing(rooms=2.0))
+    b = store.content_hash_key(make_listing(rooms=3.0))
+    assert a != b
+
+
 def test_insert_and_find_by_content_hash(isolated_db):
     listing = make_listing()
     with store.connect() as conn:
@@ -59,6 +95,12 @@ def test_phone_hash_key_differs_for_different_phone():
     a = store.phone_hash_key(make_listing(phone="050-1234567"))
     b = store.phone_hash_key(make_listing(phone="052-7654321"))
     assert a != b
+
+
+def test_phone_hash_key_ignores_small_price_variance():
+    a = store.phone_hash_key(make_listing(phone="050-1234567", price=4480))
+    b = store.phone_hash_key(make_listing(phone="050-1234567", price=4520))
+    assert a == b
 
 
 def test_insert_and_find_by_phone_hash(isolated_db):
