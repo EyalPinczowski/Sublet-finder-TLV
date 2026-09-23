@@ -191,6 +191,15 @@ otherwise-matching listing with no stated price says "Price not listed"
 rather than silently omitting the line, so it doesn't look identical to
 one that was simply cut off.
 
+Price is a **soft** filter — a listing with no stated price still passes,
+rather than being dropped as unverifiable — which means it was never
+actually confirmed to be in your budget. Every surface labels it
+distinctly as a result: the Telegram alert's header reads "Potential
+match (price unknown)" instead of "New sublet match", and the Sheets row,
+dashboard card, and published snapshot each show a small "potential"
+badge next to the price — a visual cue to double-check that one by hand
+before the rest.
+
 ### Scan window & scheduling
 
 `config.yaml`'s `scan_window:` block controls how far back a scan looks:

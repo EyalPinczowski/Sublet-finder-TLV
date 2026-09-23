@@ -69,3 +69,26 @@ def test_publish_skips_when_site_repo_url_unset(monkeypatch, capsys):
     monkeypatch.delenv("SITE_REPO_URL", raising=False)
     publish.publish()
     assert "skipping" in capsys.readouterr().out
+
+
+def test_render_snapshot_marks_missing_price_as_potential(isolated_db):
+    """Price is a soft filter — a listing with no stated price still
+    shows up here, but was never actually confirmed to be in budget."""
+    listing = Listing(
+        post_url="https://facebook.com/groups/1/posts/3",
+        group_name="Secret Tel Aviv",
+        raw_text="raw text",
+        price=None,
+        score=80,
+    )
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        snapshot = publish.render_snapshot(conn)
+    assert '<span class="potential">potential</span>' in snapshot
+
+
+def test_render_snapshot_omits_potential_badge_when_price_is_known(isolated_db):
+    with store.connect() as conn:
+        _seed(conn)  # price=3300
+        snapshot = publish.render_snapshot(conn)
+    assert '<span class="potential">potential</span>' not in snapshot

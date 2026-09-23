@@ -36,7 +36,13 @@ def format_alert(listing: Listing, profile: SearchConfig, score: int) -> str:
     # literal text color, so a distinct emoji per profile (see config.yaml's
     # searches: list) is what makes two profiles' alerts visually distinct
     # from each other at a glance.
-    header = f"{profile.emoji} New sublet match — {profile.name} ({listing.group_name})"
+    #
+    # Price is a soft filter (a listing with no stated price still passes,
+    # rather than being dropped as unverifiable) — but that means it was
+    # never actually confirmed to be in budget, so it's labeled distinctly
+    # here rather than presented as an equally-confirmed match.
+    label = "Potential match (price unknown)" if listing.price is None else "New sublet match"
+    header = f"{profile.emoji} {label} — {profile.name} ({listing.group_name})"
     header += f"  {stars(score)} ({score})"
     lines = [header]
 

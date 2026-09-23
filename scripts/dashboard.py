@@ -83,6 +83,9 @@ def _card(row, token: str, score: int) -> str:
     )
     profiles = ", ".join(row.profile_names()) or "?"
     price = f"{row.price} ILS" if row.price is not None else "Price not listed"
+    # Price is a soft filter — a listing with no stated price still shows
+    # up here, but was never actually confirmed to be in budget.
+    potential_html = "" if row.price is not None else '<span class="potential">potential</span>'
     suitable_html = _suitable_badge_html(row.available_rooms)
     stay = " &middot; ".join(
         part
@@ -98,7 +101,7 @@ def _card(row, token: str, score: int) -> str:
     return f"""
     <div class="card">
       {img_html}
-      <h3>{price} &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>
+      <h3>{price}{potential_html} &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>
       <p class="matched">Matched: {html.escape(profiles)}</p>{suitable_html}
       {stay_html}
       <p class="addr">{html.escape(row.address or row.neighborhoods or 'area unknown')}</p>
@@ -222,6 +225,9 @@ body {{ font-family: sans-serif; max-width: 700px; margin: 2rem auto; padding: 0
                     padding: 0.1rem 0.5rem; font-size: 0.85em; margin-left: 0.4rem; }}
 .suitable-other {{ display: inline-block; background: #eef; color: #334; border-radius: 4px;
                     padding: 0.1rem 0.5rem; font-size: 0.85em; margin-left: 0.4rem; }}
+.potential {{ display: inline-block; background: #fff3cd; color: #8a6500; border-radius: 4px;
+              padding: 0.1rem 0.5rem; font-size: 0.7em; margin-left: 0.4rem;
+              vertical-align: middle; }}
 img {{ max-width: 100%; border-radius: 4px; }}
 .actions a {{ text-decoration: none; }}
 .actions form {{ display: inline; }}

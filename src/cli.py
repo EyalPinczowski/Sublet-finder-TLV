@@ -362,11 +362,12 @@ def _scan(config: Config, args) -> bool:
                     _print_explain(candidate_profiles, listing, group.name, config)
 
                 if args.dry_run:
+                    potential = " (potential — price unknown)" if listing.price is None else ""
                     for p in matched_profiles:
                         console.print(
                             f"[green]Would match[/] [{p.emoji} {p.name}] ({group.name}): "
-                            f"{listing.price or '?'} ILS, {listing.rooms or '?'} rooms — "
-                            f"{listing.post_url}"
+                            f"{listing.price or '?'} ILS, {listing.rooms or '?'} rooms"
+                            f"{potential} — {listing.post_url}"
                         )
                     continue
 
@@ -383,11 +384,12 @@ def _scan(config: Config, args) -> bool:
                     continue
                 new_match_count += 1
 
+                potential = " (potential — price unknown)" if listing.price is None else ""
                 for p in matched_profiles:
                     console.print(
                         f"[green]Match![/] [{p.emoji} {p.name}] ({group.name}): "
                         f"{listing.price or '?'} ILS, {listing.rooms or '?'} rooms, "
-                        f"score {scores[p.name]} — {listing.post_url}"
+                        f"score {scores[p.name]}{potential} — {listing.post_url}"
                     )
                 sheets.save_listing(listing)
                 if config.telegram:

@@ -242,6 +242,44 @@ def test_save_listing_writes_not_listed_for_missing_price(monkeypatch, tmp_path)
     assert row[sheets.HEADER.index("price")] == "not listed"
 
 
+def test_save_listing_flags_missing_price_as_potential(monkeypatch, tmp_path):
+    """Price is a soft filter — a listing with no stated price still gets
+    saved, but was never actually confirmed to be in budget. The sheet
+    should flag it rather than presenting it identically to a
+    price-confirmed row."""
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing(price=None))
+
+    row = ws.append_row.call_args.args[0]
+    assert row[sheets.HEADER.index("potential")] == "yes"
+
+
+def test_save_listing_leaves_potential_blank_when_price_is_known(monkeypatch, tmp_path):
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing(price=3300))
+
+    row = ws.append_row.call_args.args[0]
+    assert row[sheets.HEADER.index("potential")] == ""
+
+
 def test_save_listing_writes_lease_start_and_stay_days(monkeypatch, tmp_path):
     from datetime import date
 

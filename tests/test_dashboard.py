@@ -133,6 +133,29 @@ def test_render_page_omits_suitable_badge_when_available_rooms_unknown(isolated_
     assert '<span class="suitable-other">' not in page
 
 
+def test_render_page_marks_missing_price_as_potential(isolated_db):
+    """Price is a soft filter — a listing with no stated price still
+    shows up here, but was never actually confirmed to be in budget."""
+    with store.connect() as conn:
+        listing = Listing(
+            post_url="https://facebook.com/groups/1/posts/6",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=None,
+            score=80,
+        )
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    assert '<span class="potential">potential</span>' in page
+
+
+def test_render_page_omits_potential_badge_when_price_is_known(isolated_db):
+    with store.connect() as conn:
+        _seed(conn)  # price=3300
+        page = dashboard.render_page(conn, "tok")
+    assert '<span class="potential">potential</span>' not in page
+
+
 def test_render_page_includes_google_maps_link_for_known_address(isolated_db):
     with store.connect() as conn:
         listing = _seed(conn)  # has address="דיזנגוף 120"

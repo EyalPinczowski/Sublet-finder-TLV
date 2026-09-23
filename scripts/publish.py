@@ -45,10 +45,13 @@ def _card(row, score: int) -> str:
         if part
     )
     stay_html = f'<p class="stay">{html.escape(stay)}</p>' if stay else ""
+    # Price is a soft filter — a listing with no stated price still shows
+    # up here, but was never actually confirmed to be in budget.
+    potential_html = "" if row.price is not None else '<span class="potential">potential</span>'
     return (
         f'<div class="card">{img_html}'
-        f"<h3>{f'{row.price} ILS' if row.price is not None else 'Price not listed'} "
-        f"&middot; {row.rooms or '?'} rooms &middot; score {score}</h3>"
+        f"<h3>{f'{row.price} ILS' if row.price is not None else 'Price not listed'}"
+        f"{potential_html} &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>"
         f'<p class="matched">Matched: {html.escape(profiles)}</p>'
         f"{stay_html}"
         f'<p class="addr">{html.escape(row.address or row.neighborhoods or "area unknown")}</p>'
@@ -73,6 +76,9 @@ body {{ font-family: sans-serif; max-width: 700px; margin: 2rem auto; padding: 0
 .addr {{ font-weight: bold; }}
 .matched {{ display: inline-block; background: #eef; border-radius: 4px; padding: 0.1rem 0.5rem;
             font-size: 0.85em; }}
+.potential {{ display: inline-block; background: #fff3cd; color: #8a6500; border-radius: 4px;
+              padding: 0.1rem 0.5rem; font-size: 0.7em; margin-left: 0.4rem;
+              vertical-align: middle; }}
 img {{ max-width: 100%; border-radius: 4px; }}
 </style></head>
 <body>

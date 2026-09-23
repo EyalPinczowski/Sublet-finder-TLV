@@ -73,6 +73,24 @@ def test_format_alert_shows_price_when_known():
     assert "Price not listed" not in text
 
 
+def test_format_alert_labels_a_missing_price_as_a_potential_match():
+    """Price is a soft filter — a listing with no stated price still
+    passes, but was never actually confirmed to be in budget. The header
+    should say so rather than reading identically to a price-confirmed
+    match."""
+    listing = make_listing(price=None)
+    text = format_alert(listing, make_profile(), 80)
+    assert "Potential match" in text
+    assert "New sublet match" not in text
+
+
+def test_format_alert_header_says_new_match_when_price_is_known():
+    listing = make_listing(price=3300)
+    text = format_alert(listing, make_profile(), 80)
+    assert "New sublet match" in text
+    assert "Potential match" not in text
+
+
 def test_format_alert_shows_lease_start_and_duration():
     listing = make_listing(lease_start_date=date(2026, 11, 1), lease_duration_days=14)
     text = format_alert(listing, make_profile(), 80)

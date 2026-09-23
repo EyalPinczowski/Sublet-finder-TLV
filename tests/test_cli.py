@@ -642,6 +642,60 @@ def test_no_explain_output_without_the_flag(isolated_db, monkeypatch, capsys):
     assert "No match" not in out
 
 
+# --- console output: a missing price is labeled "potential" ---
+
+
+def test_dry_run_labels_a_missing_price_as_potential(isolated_db, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+    _patch_matches_everything(monkeypatch)
+
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t")
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
+    listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t", price=None)
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+
+    cli._scan(make_config(), _Args(dry_run=True))
+    out = capsys.readouterr().out
+    assert "(potential — price unknown)" in out
+
+
+def test_dry_run_does_not_label_a_known_price_as_potential(isolated_db, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+    _patch_matches_everything(monkeypatch)
+
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t")
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
+    listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t", price=3300)
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+
+    cli._scan(make_config(), _Args(dry_run=True))
+    out = capsys.readouterr().out
+    assert "(potential — price unknown)" not in out
+
+
+def test_real_match_labels_a_missing_price_as_potential(isolated_db, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+    _patch_matches_everything(monkeypatch)
+
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t")
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([post], True))
+    listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t", price=None)
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+
+    cli._scan(make_config(), _Args())
+    out = capsys.readouterr().out
+    assert "(potential — price unknown)" in out
+
+
 # --- cross-group dedup: the same apartment posted to 2 groups in one scan ---
 
 

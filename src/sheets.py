@@ -16,7 +16,7 @@ SERVICE_ACCOUNT_PATH = (
     Path(__file__).resolve().parent.parent / "auth" / "google_service_account.json"
 )
 HEADER = [
-    "post_url", "group", "price", "rooms", "roommates", "toilets",
+    "post_url", "group", "price", "potential", "rooms", "roommates", "toilets",
     "suitable_for", "address", "phone", "lease_start", "stay_days",
     "distance_m", "score", "summary",
 ]
@@ -33,6 +33,12 @@ def _suitable_for(available_rooms: int | None) -> str:
 
 def _price_cell(price: int | None) -> str | int:
     return price if price is not None else "not listed"
+
+
+def _potential_cell(price: int | None) -> str:
+    # Price is a soft filter — a listing with no stated price still shows
+    # up here, but was never actually confirmed to be in budget.
+    return "yes" if price is None else ""
 
 
 _sheet = None
@@ -101,6 +107,7 @@ def save_listing(listing: Listing) -> None:
                 listing.post_url,
                 listing.group_name,
                 _price_cell(listing.price),
+                _potential_cell(listing.price),
                 listing.rooms,
                 listing.roommates,
                 listing.toilets,
