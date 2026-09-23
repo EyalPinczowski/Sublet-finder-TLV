@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 
 import yaml
@@ -114,7 +115,7 @@ class Config:
     stay: StayConfig
     scan_window: ScanWindowConfig
 
-    @property
+    @cached_property
     def all_neighborhoods(self) -> list[str]:
         """The union of every profile's neighborhood list — used at
         extraction time so a post's neighborhoods_mentioned covers whatever

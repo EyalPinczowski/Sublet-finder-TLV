@@ -197,7 +197,21 @@ def find_by_phone_hash(conn, phone_hash: str | None) -> str | None:
     return row["post_url"] if row else None
 
 
-def insert_listing(conn, listing, matched_profiles: list[str]) -> int | None:
+def insert_listing(
+    conn,
+    listing,
+    matched_profiles: list[str],
+    content_hash: str | None = None,
+    phone_hash: str | None = None,
+) -> int | None:
+    """content_hash/phone_hash default to recomputing from `listing` when
+    omitted, but a caller that already computed them (e.g. cli.py's _scan,
+    which needs them beforehand anyway to check find_by_content_hash/
+    find_by_phone_hash) should pass them in to avoid hashing twice."""
+    if content_hash is None:
+        content_hash = content_hash_key(listing)
+    if phone_hash is None:
+        phone_hash = phone_hash_key(listing)
     cur = conn.execute(
         "INSERT OR IGNORE INTO listings "
         "(post_url, group_name, raw_text, price, rooms, neighborhoods, "
@@ -226,8 +240,8 @@ def insert_listing(conn, listing, matched_profiles: list[str]) -> int | None:
             listing.lon,
             listing.distance_m,
             listing.score,
-            content_hash_key(listing),
-            phone_hash_key(listing),
+            content_hash,
+            phone_hash,
             1 if matched_profiles else 0,
             ", ".join(matched_profiles),
         ),
@@ -243,6 +257,25 @@ def mark_listing_notified(conn, listing_id: int) -> None:
     conn.execute("UPDATE listings SET notified = 1 WHERE id = ?", (listing_id,))
 
 
+def recent_matched_http_urls(conn, limit: int) -> list[str]:
+    """post_urls of the most-recently-matched, still-visible (not
+    dismissed/dead), real-link listings — a lightweight alternative to
+    list_listings() for a caller (dead-link pruning) that only needs the
+    URL and a small capped batch, not every column of the whole match
+    history."""
+    rows = conn.execute(
+        "SELECT l.post_url FROM listings l WHERE l.matched = 1 "
+        "AND l.post_url LIKE 'http%' AND NOT EXISTS ("
+        "  SELECT 1 FROM marks m WHERE m.post_url = l.post_url AND m.mark = 'dismiss'"
+        # id DESC as a tiebreaker: created_at has only second precision, so
+        # several rows inserted within the same second would otherwise sort
+        # arbitrarily rather than newest-first.
+        ") ORDER BY l.created_at DESC, l.id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [row["post_url"] for row in rows]
+
+
 def list_listings(
     conn, matched_only: bool = True, include_dismissed: bool = False
 ) -> list[ListingRow]:
@@ -255,7 +288,8 @@ def list_listings(
     listings = [ListingRow(**dict(r)) for r in rows]
     if include_dismissed:
         return listings
-    return [row for row in listings if not is_dismissed(conn, row.post_url)]
+    dismissed = _dismissed_post_urls(conn)
+    return [row for row in listings if row.post_url not in dismissed]
 
 
 # --- votes: ⭐ save / 🗑 dismiss (Telegram buttons and the dashboard) ---
@@ -281,6 +315,13 @@ def mark_listing_dead(conn, post_url: str) -> None:
     add_mark(conn, post_url, _DEAD_LINK_USER_ID, "dismiss")
 
 
+def _dismissed_post_urls(conn) -> set[str]:
+    """Every post_url with a dismiss mark, in one query — the batch form
+    list_listings() uses instead of an is_dismissed() call per row."""
+    rows = conn.execute("SELECT DISTINCT post_url FROM marks WHERE mark = 'dismiss'").fetchall()
+    return {row["post_url"] for row in rows}
+
+
 def is_dismissed(conn, post_url: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM marks WHERE post_url = ? AND mark = 'dismiss' LIMIT 1", (post_url,)
@@ -295,12 +336,35 @@ def save_count(conn, post_url: str) -> int:
     return row["n"] if row else 0
 
 
+def _save_counts(conn) -> dict[str, int]:
+    """Every post_url's save count, in one query — the batch form
+    effective_scores() uses instead of a save_count() call per row."""
+    rows = conn.execute(
+        "SELECT post_url, COUNT(*) AS n FROM marks WHERE mark = 'save' GROUP BY post_url"
+    ).fetchall()
+    return {row["post_url"]: row["n"] for row in rows}
+
+
 def effective_score(conn, row: ListingRow) -> int:
     """The stored fit score plus MARK_SCORE_DELTA per ⭐ save — intentionally
     uncapped past 100, so a well-endorsed listing can read above 100 rather
-    than being swallowed by the ceiling (mirrors bgu's approach)."""
+    than being swallowed by the ceiling (mirrors bgu's approach). For a
+    single listing (e.g. right after inserting or voting on it); a caller
+    scoring/sorting a whole list_listings() result should use
+    effective_scores() instead — one query total rather than one per row."""
     base = row.score or 0
     return base + save_count(conn, row.post_url) * MARK_SCORE_DELTA
+
+
+def effective_scores(conn, rows: list[ListingRow]) -> dict[str, int]:
+    """effective_score() for a whole list of rows in one batch query
+    (keyed by post_url) instead of one save_count() query per row —
+    use this for sorting/displaying a list_listings() result."""
+    counts = _save_counts(conn)
+    return {
+        row.post_url: (row.score or 0) + counts.get(row.post_url, 0) * MARK_SCORE_DELTA
+        for row in rows
+    }
 
 
 # --- callback tokens: short stand-ins for post_url in Telegram buttons ---

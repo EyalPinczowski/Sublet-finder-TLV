@@ -25,7 +25,7 @@ def test_geocode_returns_none_for_empty_address(tmp_path, monkeypatch):
 def test_geocode_returns_coordinates_on_success(tmp_path, monkeypatch):
     _isolate_cache(tmp_path, monkeypatch)
     with patch(
-        "src.geocode.requests.get",
+        "src.geocode._session.get",
         return_value=_mock_response([{"lat": "32.0768", "lon": "34.7742"}]),
     ):
         result = geocode.geocode("Dizengoff Square")
@@ -34,20 +34,20 @@ def test_geocode_returns_coordinates_on_success(tmp_path, monkeypatch):
 
 def test_geocode_returns_none_on_empty_results(tmp_path, monkeypatch):
     _isolate_cache(tmp_path, monkeypatch)
-    with patch("src.geocode.requests.get", return_value=_mock_response([])):
+    with patch("src.geocode._session.get", return_value=_mock_response([])):
         assert geocode.geocode("nowhere at all") is None
 
 
 def test_geocode_returns_none_on_request_failure(tmp_path, monkeypatch):
     _isolate_cache(tmp_path, monkeypatch)
-    with patch("src.geocode.requests.get", side_effect=Exception("network down")):
+    with patch("src.geocode._session.get", side_effect=Exception("network down")):
         assert geocode.geocode("Dizengoff Square") is None
 
 
 def test_geocode_caches_and_does_not_re_request(tmp_path, monkeypatch):
     _isolate_cache(tmp_path, monkeypatch)
     with patch(
-        "src.geocode.requests.get",
+        "src.geocode._session.get",
         return_value=_mock_response([{"lat": "32.0768", "lon": "34.7742"}]),
     ) as mock_get:
         geocode.geocode("Dizengoff Square")
@@ -59,7 +59,7 @@ def test_geocode_caches_and_does_not_re_request(tmp_path, monkeypatch):
 def test_geocode_persists_cache_to_disk(tmp_path, monkeypatch):
     _isolate_cache(tmp_path, monkeypatch)
     with patch(
-        "src.geocode.requests.get",
+        "src.geocode._session.get",
         return_value=_mock_response([{"lat": "32.0768", "lon": "34.7742"}]),
     ):
         geocode.geocode("Dizengoff Square")
@@ -68,7 +68,7 @@ def test_geocode_persists_cache_to_disk(tmp_path, monkeypatch):
     # A fresh in-memory cache should read the persisted result without a
     # network call.
     monkeypatch.setattr(geocode, "_cache", None)
-    with patch("src.geocode.requests.get") as mock_get:
+    with patch("src.geocode._session.get") as mock_get:
         result = geocode.geocode("Dizengoff Square")
     mock_get.assert_not_called()
     assert result == (32.0768, 34.7742)

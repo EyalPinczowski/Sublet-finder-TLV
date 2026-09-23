@@ -112,25 +112,23 @@ def _prune_dead_links(conn, headless: bool) -> None:
     matches/dashboard instead of sitting there indefinitely. Any failure
     here (network hiccup, selector churn) is swallowed — this is a
     nice-to-have, never worth failing or blocking the scan over."""
-    rows = store.list_listings(conn, matched_only=True)
-    rows.sort(key=lambda r: r.created_at, reverse=True)
-    candidates = [r for r in rows if r.post_url.startswith("http")][:_DEAD_LINK_CHECK_LIMIT]
-    if not candidates:
+    urls = store.recent_matched_http_urls(conn, _DEAD_LINK_CHECK_LIMIT)
+    if not urls:
         return
     try:
         with sync_playwright() as p:
             context = open_authenticated_context(p, headless=headless)
             page = context.new_page()
-            for row in candidates:
+            for url in urls:
                 try:
-                    page.goto(row.post_url, wait_until="domcontentloaded", timeout=15000)
+                    page.goto(url, wait_until="domcontentloaded", timeout=15000)
                     time.sleep(random.uniform(1.0, 2.5))
                     body_text = page.locator("body").inner_text(timeout=2000).lower()
                 except Exception:
                     continue
                 if any(marker in body_text for marker in _DEAD_LINK_MARKERS):
-                    store.mark_listing_dead(conn, row.post_url)
-                    console.print(f"[yellow]Pruned dead listing:[/] {row.post_url}")
+                    store.mark_listing_dead(conn, url)
+                    console.print(f"[yellow]Pruned dead listing:[/] {url}")
             context.close()
     except Exception:
         pass
@@ -169,15 +167,23 @@ def _scan(config: Config, args) -> bool:
                 if listing is None:
                     continue
 
-                dup_url = store.find_by_content_hash(conn, store.content_hash_key(listing))
+                content_hash = store.content_hash_key(listing)
+                dup_url = store.find_by_content_hash(conn, content_hash)
                 if dup_url and dup_url != listing.post_url:
                     continue  # likely the same flat, already stored under a different key
 
-                dup_phone_url = store.find_by_phone_hash(conn, store.phone_hash_key(listing))
+                phone_hash = store.phone_hash_key(listing)
+                dup_phone_url = store.find_by_phone_hash(conn, phone_hash)
                 if dup_phone_url and dup_phone_url != listing.post_url:
                     continue  # same phone+price+rooms — likely a reworded repost
 
                 _geocode_listing(listing, config)
+
+                age_hours = (
+                    (datetime.now(timezone.utc) - post.posted_at).total_seconds() / 3600
+                    if post.posted_at
+                    else None
+                )
 
                 # Evaluate this one extraction against every configured
                 # profile — a listing can match more than one (e.g. it
@@ -189,7 +195,10 @@ def _scan(config: Config, args) -> bool:
                     for p in config.searches
                     if matches_search(listing, p, config.zone, config.stay)
                 ]
-                scores = {p.name: scoring.score(listing, p, config.zone) for p in matched_profiles}
+                scores = {
+                    p.name: scoring.score(listing, p, config.zone, age_hours)
+                    for p in matched_profiles
+                }
                 if matched_profiles:
                     listing.score = max(scores.values())
 
@@ -203,7 +212,11 @@ def _scan(config: Config, args) -> bool:
                     continue
 
                 listing_id = store.insert_listing(
-                    conn, listing, matched_profiles=[p.name for p in matched_profiles]
+                    conn,
+                    listing,
+                    matched_profiles=[p.name for p in matched_profiles],
+                    content_hash=content_hash,
+                    phone_hash=phone_hash,
                 )
                 if not listing_id:
                     continue  # INSERT OR IGNORE hit a duplicate race
@@ -251,9 +264,10 @@ def cmd_matches(_args) -> None:
         if not listings:
             console.print("No matching apartments found yet.")
             return
-        listings.sort(key=lambda row: store.effective_score(conn, row), reverse=True)
+        scores = store.effective_scores(conn, listings)
+        listings.sort(key=lambda row: scores[row.post_url], reverse=True)
         for listing in listings:
-            score = store.effective_score(conn, listing)
+            score = scores[listing.post_url]
             profiles = ", ".join(listing.profile_names()) or "?"
             price = f"{listing.price} ILS" if listing.price is not None else "Price not listed"
             body_lines = [

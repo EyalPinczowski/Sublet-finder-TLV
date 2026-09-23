@@ -109,7 +109,7 @@ def _mock_response(ok=True):
 def test_send_listing_plain_text_when_no_images():
     listing = make_listing(images=[])
     with patch(
-        "src.telegram_notifier.requests.post", return_value=_mock_response(True)
+        "src.telegram_notifier._session.post", return_value=_mock_response(True)
     ) as mock_post:
         assert send_listing("token", "chat", listing, make_profile(), 80) is True
         assert mock_post.call_count == 1
@@ -119,7 +119,7 @@ def test_send_listing_plain_text_when_no_images():
 def test_send_listing_sends_single_photo():
     listing = make_listing(images=["https://example.com/a.jpg"])
     with patch(
-        "src.telegram_notifier.requests.post", return_value=_mock_response(True)
+        "src.telegram_notifier._session.post", return_value=_mock_response(True)
     ) as mock_post:
         assert send_listing("token", "chat", listing, make_profile(), 80) is True
         assert mock_post.call_count == 1
@@ -129,7 +129,7 @@ def test_send_listing_sends_single_photo():
 def test_send_listing_falls_back_to_text_when_photo_fails():
     listing = make_listing(images=["https://example.com/a.jpg"])
     responses = [_mock_response(False), _mock_response(True)]
-    with patch("src.telegram_notifier.requests.post", side_effect=responses) as mock_post:
+    with patch("src.telegram_notifier._session.post", side_effect=responses) as mock_post:
         assert send_listing("token", "chat", listing, make_profile(), 80) is True
         methods = [call.args[0] for call in mock_post.call_args_list]
         assert any("sendPhoto" in m for m in methods)
@@ -139,7 +139,7 @@ def test_send_listing_falls_back_to_text_when_photo_fails():
 def test_send_listing_sends_album_for_multiple_photos():
     listing = make_listing(images=["https://example.com/a.jpg", "https://example.com/b.jpg"])
     with patch(
-        "src.telegram_notifier.requests.post", return_value=_mock_response(True)
+        "src.telegram_notifier._session.post", return_value=_mock_response(True)
     ) as mock_post:
         assert send_listing("token", "chat", listing, make_profile(), 80) is True
         assert "sendMediaGroup" in mock_post.call_args_list[0].args[0]
@@ -147,7 +147,7 @@ def test_send_listing_sends_album_for_multiple_photos():
 
 def test_send_listing_falls_back_to_text_when_all_sends_fail():
     listing = make_listing(images=[])
-    with patch("src.telegram_notifier.requests.post", return_value=_mock_response(False)):
+    with patch("src.telegram_notifier._session.post", return_value=_mock_response(False)):
         assert send_listing("token", "chat", listing, make_profile(), 80) is False
 
 
@@ -157,7 +157,7 @@ def test_send_listing_includes_vote_buttons_when_conn_given(isolated_db):
     listing = make_listing(images=[])
     with store.connect() as conn:
         with patch(
-            "src.telegram_notifier.requests.post", return_value=_mock_response(True)
+            "src.telegram_notifier._session.post", return_value=_mock_response(True)
         ) as mock_post:
             send_listing("token", "chat", listing, make_profile(), 80, conn=conn)
             payload = mock_post.call_args.kwargs["json"]

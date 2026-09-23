@@ -27,6 +27,12 @@ NOMINATIM_USER_AGENT = "sublet-finder-tlv/1.0 (personal apartment search)"
 _MIN_INTERVAL_SEC = 1.0
 _last_call = 0.0
 
+# A shared Session reuses one keep-alive TCP/TLS connection to Nominatim
+# across every geocode() call this process makes, instead of each call
+# paying a fresh handshake.
+_session = requests.Session()
+_session.headers.update({"User-Agent": NOMINATIM_USER_AGENT})
+
 _cache: Optional[dict] = None
 
 
@@ -82,7 +88,7 @@ def geocode(address: str) -> Optional[tuple[float, float]]:
 def _geocode_live(address: str) -> Optional[tuple[float, float]]:
     _pace()
     try:
-        resp = requests.get(
+        resp = _session.get(
             NOMINATIM_URL,
             params={
                 "q": f"{address}, Tel Aviv, Israel",
@@ -91,7 +97,6 @@ def _geocode_live(address: str) -> Optional[tuple[float, float]]:
                 "viewbox": TEL_AVIV_VIEWBOX,
                 "bounded": 1,
             },
-            headers={"User-Agent": NOMINATIM_USER_AGENT},
             timeout=10,
         )
         resp.raise_for_status()

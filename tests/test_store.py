@@ -159,6 +159,51 @@ def test_effective_score_adds_save_bonus(isolated_db):
         assert store.effective_score(conn, row) == 50 + store.MARK_SCORE_DELTA
 
 
+def test_effective_scores_batch_matches_effective_score_per_row(isolated_db):
+    a = make_listing(post_url="https://facebook.com/groups/1/posts/a", score=50)
+    b = make_listing(post_url="https://facebook.com/groups/1/posts/b", score=70)
+    with store.connect() as conn:
+        store.insert_listing(conn, a, matched_profiles=["default"])
+        store.insert_listing(conn, b, matched_profiles=["default"])
+        store.add_mark(conn, a.post_url, "user1", "save")
+        rows = store.list_listings(conn, matched_only=True)
+        batch = store.effective_scores(conn, rows)
+        for row in rows:
+            assert batch[row.post_url] == store.effective_score(conn, row)
+        assert batch[a.post_url] == 50 + store.MARK_SCORE_DELTA
+        assert batch[b.post_url] == 70
+
+
+def test_effective_scores_empty_list(isolated_db):
+    with store.connect() as conn:
+        assert store.effective_scores(conn, []) == {}
+
+
+def test_recent_matched_http_urls_orders_newest_first_and_respects_limit(isolated_db):
+    with store.connect() as conn:
+        for i in range(3):
+            listing = make_listing(post_url=f"https://facebook.com/groups/1/posts/{i}")
+            store.insert_listing(conn, listing, matched_profiles=["default"])
+        urls = store.recent_matched_http_urls(conn, limit=2)
+        assert len(urls) == 2
+        assert urls[0] == "https://facebook.com/groups/1/posts/2"
+
+
+def test_recent_matched_http_urls_excludes_dismissed(isolated_db):
+    listing = make_listing()
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        store.mark_listing_dead(conn, listing.post_url)
+        assert store.recent_matched_http_urls(conn, limit=20) == []
+
+
+def test_recent_matched_http_urls_excludes_synthetic_text_sig_urls(isolated_db):
+    listing = make_listing(post_url="text:abc123")
+    with store.connect() as conn:
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        assert store.recent_matched_http_urls(conn, limit=20) == []
+
+
 def test_add_mark_upserts_on_conflict(isolated_db):
     listing = make_listing()
     with store.connect() as conn:

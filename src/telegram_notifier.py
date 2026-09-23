@@ -11,6 +11,12 @@ from .scoring import stars
 
 EXCERPT_LIMIT = 300
 
+# A shared Session reuses one keep-alive TCP/TLS connection to
+# api.telegram.org across every alert sent this process, instead of each
+# _post() call paying a fresh handshake — a scan can send several calls
+# per matched listing (photo/album + a follow-up keyboard message).
+_session = requests.Session()
+
 
 def _contact_link(phone: str | None) -> str | None:
     """A tappable WhatsApp link for a normalized Israeli mobile
@@ -113,7 +119,7 @@ def _alert_keyboard(conn, post_url: str) -> dict | None:
 
 def _post(bot_token: str, method: str, payload: dict, timeout: int) -> dict | None:
     try:
-        r = requests.post(
+        r = _session.post(
             f"https://api.telegram.org/bot{bot_token}/{method}", json=payload, timeout=timeout
         )
         r.raise_for_status()

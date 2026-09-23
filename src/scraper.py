@@ -321,28 +321,6 @@ def _scroll_and_extract(
     return results
 
 
-def _scroll_to_load_posts(page: Page, target_count: int, max_scrolls: int = 15) -> None:
-    """Legacy count-only scroll, kept for the cutoff=None fallback path and
-    any direct callers/tests that still target it."""
-    for _ in range(max_scrolls):
-        count = page.locator('[role="article"]').count()
-        if count >= target_count:
-            return
-        page.mouse.wheel(0, random.randint(2500, 4500))
-        _jitter(_SCROLL_DELAY)
-
-
-def _extract_posts(page: Page, limit: int) -> list[RawPost]:
-    articles = page.locator('[role="article"]')
-    n = min(articles.count(), limit)
-    results: list[RawPost] = []
-    for i in range(n):
-        post = _extract_one_post(articles.nth(i))
-        if post is not None:
-            results.append(post)
-    return results
-
-
 def jitter_between_groups() -> None:
     """Called by the CLI between groups, so back-to-back group scans don't
     fire at a fixed, robotically periodic cadence."""

@@ -41,8 +41,7 @@ def _get_token() -> str:
     return token
 
 
-def _card(conn, row, token: str) -> str:
-    score = store.effective_score(conn, row)
+def _card(row, token: str, score: int) -> str:
     images = row.image_urls()
     img_html = f'<img src="{html.escape(images[0])}">' if images else ""
     post_link = (
@@ -83,8 +82,12 @@ def _card(conn, row, token: str) -> str:
 
 def render_page(conn, token: str) -> str:
     rows = store.list_listings(conn, matched_only=True)
-    rows.sort(key=lambda r: store.effective_score(conn, r), reverse=True)
-    cards = "".join(_card(conn, row, token) for row in rows) or "<p>No matches yet.</p>"
+    scores = store.effective_scores(conn, rows)
+    rows.sort(key=lambda r: scores[r.post_url], reverse=True)
+    cards = (
+        "".join(_card(row, token, scores[row.post_url]) for row in rows)
+        or "<p>No matches yet.</p>"
+    )
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>TLV Sublet Matches</title>
 <style>

@@ -12,7 +12,8 @@ from src.config import (
     StayConfig,
     ZoneConfig,
 )
-from src.scraper import ScraperBlocked
+from src.listing_models import Listing
+from src.scraper import RawPost, ScraperBlocked
 
 
 def make_config(**overrides) -> Config:
@@ -147,3 +148,61 @@ def test_cmd_scan_does_not_exit_when_not_blocked(isolated_db, monkeypatch, tmp_p
 def test_prune_dead_links_noop_when_no_matched_listings(isolated_db):
     with store.connect() as conn:
         cli._prune_dead_links(conn, headless=True)  # must not raise
+
+
+# --- freshness scoring: post.posted_at must actually reach scoring.score ---
+
+
+def test_scan_threads_post_age_into_scoring(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda conn, headless: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+
+    posted_at = datetime.now(timezone.utc) - timedelta(hours=5)
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t", posted_at=posted_at)
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [post])
+
+    listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t")
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+    monkeypatch.setattr(cli, "matches_search", lambda *a, **k: True)
+
+    captured_age_hours = []
+
+    def fake_score(listing_arg, profile, zone_cfg, age_hours=None):
+        captured_age_hours.append(age_hours)
+        return 50
+
+    monkeypatch.setattr(cli.scoring, "score", fake_score)
+
+    cli._scan(make_config(), _Args())
+
+    assert len(captured_age_hours) == 1
+    assert captured_age_hours[0] is not None
+    assert 4.9 < captured_age_hours[0] < 5.1
+
+
+def test_scan_leaves_age_hours_none_when_post_has_no_timestamp(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda conn, headless: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: None)
+
+    post = RawPost(post_url="https://fb.com/1", author="a", text="t", posted_at=None)
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: [post])
+
+    listing = Listing(post_url=post.post_url, group_name="g1", raw_text="t")
+    monkeypatch.setattr(cli, "_extract_listing", lambda p, g, c: listing)
+    monkeypatch.setattr(cli, "matches_search", lambda *a, **k: True)
+
+    captured_age_hours = []
+    monkeypatch.setattr(
+        cli.scoring,
+        "score",
+        lambda listing_arg, profile, zone_cfg, age_hours=None: captured_age_hours.append(
+            age_hours
+        )
+        or 50,
+    )
+
+    cli._scan(make_config(), _Args())
+
+    assert captured_age_hours == [None]
