@@ -42,33 +42,69 @@ zone:
   target_lon: 34.7742
   max_distance_meters: 1000
 
-# Your criteria for the apartment you're looking to sublet FROM someone.
-# Posts offering a sublet (not seeking one) are checked against this with
-# cheap local regex matching — no API calls, fully free.
-search:
-  price_min: 2500
-  price_max: 3600
-  min_rooms: null
-  # Substring match (Hebrew or English), case-insensitive. Leave empty to
-  # match any neighborhood.
-  neighborhoods:
-    - "כיכר דיזנגוף"
-    - "כיכר דיזינגוף"
-    - "dizengoff square"
-    - "כרם התימנים"
-    - "kerem hateimanim"
-    - "kerem ha teimanim"
-    - "הבימה"
-    - "habima"
-  # Posts containing any of these are dropped even if they mention sublets
-  # (useful for filtering out false positives the keyword heuristic misses).
-  excluded_keywords: []
-  # Total roommates in the apartment (including you), max allowed.
-  max_roommates: 3
-  # Bathroom rule — a listing passes if ANY of these hold:
-  #   - the apartment has at least min_bathrooms toilets
-  #   - there's a toilet per roommate
-  #   - the toilet and shower are separate rooms, and roommates <=
-  #     separate_toilet_shower_max_roommates
-  min_bathrooms: 2
-  separate_toilet_shower_max_roommates: 3
+# Your criteria for the apartment(s) you're looking to sublet FROM someone —
+# one or more NAMED profiles, each checked against every post in the same
+# scan (no separate runs needed). A post can match more than one profile; it
+# gets a separate, labeled Telegram alert per profile it matches (the emoji
+# is the "color" — Telegram alerts can't have literal colored text).
+#
+# The two profiles below cover: (1) a single room for yourself, and (2) two
+# rooms available at once, for moving in with a friend — distinguished by
+# min_available_rooms/max_available_rooms (how many rooms THIS POST offers
+# right now, not the apartment's total size). Add, remove, or edit profiles
+# freely; a single legacy `search:` block (no name) still works too.
+searches:
+  - name: "single room"
+    emoji: "\U0001F7E2"  # green
+    price_min: 2500
+    price_max: 3600
+    min_rooms: null
+    min_available_rooms: 1
+    max_available_rooms: 1
+    # Substring match (Hebrew or English), case-insensitive. Leave empty to
+    # match any neighborhood — also see zone: above for a distance-based
+    # match that doesn't depend on the post naming a neighborhood at all.
+    neighborhoods:
+      - "כיכר דיזנגוף"
+      - "כיכר דיזינגוף"
+      - "dizengoff square"
+      - "כרם התימנים"
+      - "kerem hateimanim"
+      - "kerem ha teimanim"
+      - "הבימה"
+      - "habima"
+    # Posts containing any of these are dropped even if they mention sublets
+    # (useful for filtering out false positives the keyword heuristic misses).
+    excluded_keywords: []
+    # Total roommates in the apartment (including you), max allowed.
+    max_roommates: 3
+    # Bathroom rule — a listing passes if ANY of these hold:
+    #   - the apartment has at least min_bathrooms toilets
+    #   - there's a toilet per roommate
+    #   - the toilet and shower are separate rooms, and roommates <=
+    #     separate_toilet_shower_max_roommates
+    min_bathrooms: 2
+    separate_toilet_shower_max_roommates: 3
+
+  - name: "two rooms (with a friend)"
+    emoji: "\U0001F535"  # blue
+    # Roughly double the single-room budget, since you'd be splitting a
+    # bigger unit between two incoming roommates — adjust to taste.
+    price_min: 5000
+    price_max: 7200
+    min_rooms: null
+    min_available_rooms: 2
+    max_available_rooms: null
+    neighborhoods:
+      - "כיכר דיזנגוף"
+      - "כיכר דיזינגוף"
+      - "dizengoff square"
+      - "כרם התימנים"
+      - "kerem hateimanim"
+      - "kerem ha teimanim"
+      - "הבימה"
+      - "habima"
+    excluded_keywords: []
+    max_roommates: 4
+    min_bathrooms: 2
+    separate_toilet_shower_max_roommates: 4

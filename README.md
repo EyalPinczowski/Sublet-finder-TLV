@@ -1,10 +1,12 @@
 # TLV Sublet Finder
 
 Watches Tel Aviv Facebook groups for people **offering** a sublet, checks
-each one against your own price/rooms/neighborhood/roommate/bathroom
-criteria, scores and ranks the matches, and pings you on Telegram — with a
-summary, the address, a phone/WhatsApp link, the post's photos, and a link
-back to the post itself — the instant a good one shows up.
+each one against one or more named search profiles (e.g. a single room for
+yourself vs. two rooms to move in with a friend — see
+[Multiple search profiles](#multiple-search-profiles)), scores and ranks
+the matches, and pings you on Telegram — with a summary, the address, a
+phone/WhatsApp link, the post's photos, and a link back to the post itself
+— the instant a good one shows up.
 
 Everything beyond the core scan/match/notify loop is **optional and off by
 default**: skip any of it and the tool keeps working with what's configured.
@@ -24,20 +26,22 @@ default**: skip any of it and the tool keeps working with what's configured.
    Either way, the session is saved to `data/storage_state.json`.
 2. `scripts/scan.py` uses that session to open each group in `config.yaml`,
    pulls recent posts, and for each new one that looks like an *offer* (not
-   someone else looking for a place), extracts price/rooms/address/
-   roommates/bathrooms/phone/photos and checks it against your `search`
-   criteria (and, if configured, the zone-distance check below). Extraction
-   uses the Gemini LLM when `GEMINI_API_KEY` is set (far more reliable on
+   someone else looking for a place), extracts price/rooms/available-rooms/
+   address/roommates/bathrooms/phone/photos and checks it against **every**
+   profile in your `searches:` list (and, if configured, the zone-distance
+   check below) — a post can match more than one profile. Extraction uses
+   the Gemini LLM when `GEMINI_API_KEY` is set (far more reliable on
    colloquial Hebrew), automatically falling back to a regex/keyword parser
    otherwise or whenever the LLM is unavailable this run. Everything is
    stored in `data/listings.db` (SQLite), so re-running never double-
    processes a post — including cross-posts and comment-less posts with no
    recoverable permalink, which are matched on their content instead.
-3. Every match is scored 0-100 (`src/scoring.py`) and sent to Telegram —
-   with a summary, price/rooms/roommates/bathrooms, the address, a phone/
-   WhatsApp link when there is one, a link to the post, a Google Maps link,
-   and the post's own photos — plus ⭐ Save / 🗑 Dismiss buttons if you're
-   running the [vote listener](#telegram-vote-buttons).
+3. Each matched profile gets its own score (0-100, `src/scoring.py`) and its
+   own Telegram alert — with that profile's emoji/name in the header (the
+   "color"), a summary, price/rooms/roommates/bathrooms/available-rooms, the
+   address, a phone/WhatsApp link when there is one, a link to the post, a
+   Google Maps link, and the post's own photos — plus ⭐ Save / 🗑 Dismiss
+   buttons if you're running the [vote listener](#telegram-vote-buttons).
 4. `scripts/matches.py` lists everything that's matched so far, best score
    first, whether or not Telegram is set up.
 
@@ -51,8 +55,9 @@ playwright install chromium
 ```
 
 Edit `config.yaml` with the groups you're a member of, your own search
-criteria (price range, neighborhoods, room/roommate/bathroom requirements),
-and the `llm:`/`zone:` blocks described below.
+profile(s) (price range, neighborhoods, room/roommate/bathroom requirements
+— see [Multiple search profiles](#multiple-search-profiles)), and the
+`llm:`/`zone:` blocks described below.
 
 Copy `.env.example` to `.env` and fill in whichever of the following you
 want — **every one of them is optional**, and the tool degrades gracefully
@@ -86,12 +91,56 @@ never hard-fails over this.
 
 `config.yaml`'s `zone:` block scores listings by straight-line distance to a
 single point you care about (a workplace, a landmark — defaults to
-Dizengoff Square), in addition to (not instead of) the `search.neighborhoods`
-keyword list: a listing within `zone.max_distance_meters` counts as a
-location match even if its address text doesn't mention any of your
-configured neighborhoods. Geocoding is free (OpenStreetMap Nominatim, no
-key, cached to `data/geocode_cache.json` so nothing is looked up twice).
-There's no walk-time/routing — just distance.
+Dizengoff Square), in addition to (not instead of) a profile's own
+`neighborhoods` keyword list: a listing within `zone.max_distance_meters`
+counts as a location match even if its address text doesn't mention any of
+that profile's configured neighborhoods. Geocoding is free (OpenStreetMap
+Nominatim, no key, cached to `data/geocode_cache.json` so nothing is looked
+up twice). There's no walk-time/routing — just distance.
+
+### Multiple search profiles
+
+`config.yaml`'s `searches:` is a list of **named** profiles — every post is
+checked against **all** of them in the same scan (no separate runs, and
+nothing gets re-scraped or re-processed per profile). The shipped default
+has two:
+
+```yaml
+searches:
+  - name: "single room"
+    emoji: "🟢"
+    min_available_rooms: 1
+    max_available_rooms: 1
+    price_min: 2500
+    price_max: 3600
+    # ... neighborhoods, max_roommates, min_bathrooms, etc. — same fields
+    # as before, just nested under a named profile now.
+  - name: "two rooms (with a friend)"
+    emoji: "🔵"
+    min_available_rooms: 2
+    price_min: 5000
+    price_max: 7200
+```
+
+`min_available_rooms`/`max_available_rooms` filter on **how many rooms/spots
+the post is offering right now** — a new field, distinct from `min_rooms`
+(the apartment's total size). This is what makes "single room" and "two
+rooms" mean different things: a post offering one open room in a 3-room
+apartment has `available_rooms: 1` even though `rooms: 3`.
+
+A post can match more than one profile (e.g. if your profiles' price ranges
+overlap) — it gets a separate alert per profile it matches, each scored
+independently (a listing can score very differently under two profiles with
+different price ranges) and prefixed with that profile's own `emoji`. That
+emoji is the "color" mentioned above — Telegram alerts can't carry literal
+text color, so a distinct emoji per profile is what makes two profiles'
+alerts visually distinct at a glance, in the chat and in notifications.
+`scripts/matches.py`, the dashboard, and the published snapshot all show
+which profile(s) each listing matched too.
+
+Add, remove, rename, or retune profiles freely — a single legacy `search:`
+block (no `searches:` list) still works and is treated as one profile named
+`"default"`.
 
 ## Usage
 
@@ -159,7 +208,10 @@ network. Read this before using it:
 ### Google Sheets
 
 Mirrors every matched listing into a shared Sheet you can sort/filter by
-hand — additive to SQLite, disabled until set up.
+hand — additive to SQLite, disabled until set up. Includes a `suitable_for`
+column ("1 person" / "2 people" / …) derived from the post's
+`available_rooms`, so single-room and two-room matches are easy to tell
+apart at a glance there too.
 
 1. In **Google Cloud Console**: create a project → enable the **Google
    Sheets API** → create a **service account** → download its JSON key.
@@ -201,6 +253,7 @@ Nominatim, or Google Sheets calls, and they never touch `data/listings.db`
 - **The regex/keyword parser (`src/listing_parser.py`) is a fallback, not
   a language model** — used automatically whenever the LLM path isn't
   available. It will miss some genuine listings and occasionally flag a
-  false positive; the address/phone fields it recovers in particular are
-  best-effort. Tune `search.excluded_keywords` in your config to cut down
-  on noise, or set `GEMINI_API_KEY` for meaningfully better extraction.
+  false positive; the address/phone/`available_rooms` fields it recovers in
+  particular are best-effort (`available_rooms` only catches a handful of
+  common Hebrew phrasings). Tune a profile's `excluded_keywords` to cut
+  down on noise, or set `GEMINI_API_KEY` for meaningfully better extraction.

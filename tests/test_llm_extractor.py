@@ -62,6 +62,7 @@ def test_extract_builds_listing_from_offer(tmp_path, monkeypatch):
         is_offer=True,
         price_ils=3300,
         rooms=3.0,
+        available_rooms=2,
         address="דיזנגוף 120",
         roommates=2,
         toilets=2,
@@ -81,6 +82,7 @@ def test_extract_builds_listing_from_offer(tmp_path, monkeypatch):
     assert listing is not None
     assert listing.price == 3300
     assert listing.rooms == 3.0
+    assert listing.available_rooms == 2
     assert listing.address == "דיזנגוף 120"
     assert listing.phone == "050-1234567"
     assert listing.images == ["https://example.com/a.jpg"]

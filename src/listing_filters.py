@@ -27,13 +27,33 @@ def matches(listing: Listing, search_cfg: SearchConfig, zone_cfg: ZoneConfig | N
     ):
         return False
 
-    if search_cfg.neighborhoods and not listing.neighborhoods_mentioned:
+    if search_cfg.neighborhoods:
+        # listing.neighborhoods_mentioned is extracted once per post against
+        # the UNION of every configured profile's neighborhoods (see
+        # Config.all_neighborhoods), so here we narrow it down to just this
+        # profile's own list — required now that different profiles can
+        # configure different neighborhoods.
+        profile_hit = any(n in search_cfg.neighborhoods for n in listing.neighborhoods_mentioned)
         # A neighborhood-keyword miss is still a match if the listing
         # geocoded within the configured zone radius (see zones.py) — the
         # two are OR'd so a missing/failed geocode never regresses the
         # existing keyword-only behavior.
-        if not (zone_cfg and within_zone(listing.distance_m, zone_cfg)):
+        if not profile_hit and not (zone_cfg and within_zone(listing.distance_m, zone_cfg)):
             return False
+
+    if (
+        search_cfg.min_available_rooms is not None
+        and listing.available_rooms is not None
+        and listing.available_rooms < search_cfg.min_available_rooms
+    ):
+        return False
+
+    if (
+        search_cfg.max_available_rooms is not None
+        and listing.available_rooms is not None
+        and listing.available_rooms > search_cfg.max_available_rooms
+    ):
+        return False
 
     if search_cfg.excluded_keywords:
         lowered = listing.raw_text.lower()

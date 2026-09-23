@@ -16,7 +16,7 @@ def _seed(conn):
         summary="Nice place",
         score=80,
     )
-    store.insert_listing(conn, listing, matched=True)
+    store.insert_listing(conn, listing, matched_profiles=["default"])
     return listing
 
 

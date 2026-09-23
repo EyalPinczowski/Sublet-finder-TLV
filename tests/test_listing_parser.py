@@ -1,4 +1,10 @@
-from src.listing_parser import _extract_address, _extract_phone, is_offer_listing, parse_listing
+from src.listing_parser import (
+    _extract_address,
+    _extract_available_rooms,
+    _extract_phone,
+    is_offer_listing,
+    parse_listing,
+)
 
 
 def test_is_offer_listing_detects_hebrew_offer():
@@ -130,3 +136,33 @@ def test_parse_listing_populates_phone_address_summary_and_images():
     assert listing.address == "דיזנגוף 120"
     assert listing.images == ["https://example.com/a.jpg"]
     assert listing.summary is not None
+
+
+def test_extract_available_rooms_reads_a_number():
+    assert _extract_available_rooms("2 חדרים פנויים בדירה משותפת") == 2
+    assert _extract_available_rooms("2 חדרים מתפנים בקרוב") == 2
+
+
+def test_extract_available_rooms_bare_singular_is_one():
+    assert _extract_available_rooms("חדר פנוי בדירת שותפים") == 1
+    assert _extract_available_rooms("מתפנה חדר בדירת 3 חדרים") == 1
+
+
+def test_extract_available_rooms_none_without_a_phrase():
+    assert _extract_available_rooms("סאבלט בפלורנטין, 4500 שקל") is None
+
+
+def test_extract_available_rooms_distinct_from_total_rooms():
+    # "מתפנה חדר בדירת 3 חדרים" -> 1 room available, 3 rooms total.
+    text = "מתפנה חדר בדירת 3 חדרים"
+    assert _extract_available_rooms(text) == 1
+
+
+def test_parse_listing_populates_available_rooms():
+    listing = parse_listing(
+        "שני חדרים פנויים בדירה משותפת, 5000 שקל",
+        post_url="https://facebook.com/groups/1/posts/8",
+        group_name="Secret Tel Aviv",
+        known_neighborhoods=[],
+    )
+    assert listing.available_rooms == 2

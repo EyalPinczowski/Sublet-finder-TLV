@@ -5,6 +5,7 @@ import re
 import requests
 
 from . import store
+from .config import SearchConfig
 from .listing_models import Listing
 from .scoring import stars
 
@@ -34,10 +35,13 @@ def _map_url(listing: Listing) -> str | None:
     return None
 
 
-def format_alert(listing: Listing) -> str:
-    header = f"\U0001F3E0 New sublet match ({listing.group_name})"
-    if listing.score is not None:
-        header += f"  {stars(listing.score)} ({listing.score})"
+def format_alert(listing: Listing, profile: SearchConfig, score: int) -> str:
+    # The emoji is this profile's "color" — Telegram messages can't carry
+    # literal text color, so a distinct emoji per profile (see config.yaml's
+    # searches: list) is what makes two profiles' alerts visually distinct
+    # from each other at a glance.
+    header = f"{profile.emoji} New sublet match — {profile.name} ({listing.group_name})"
+    header += f"  {stars(score)} ({score})"
     lines = [header]
 
     summary = listing.summary or listing.raw_text.strip().replace("\n", " ")
@@ -54,6 +58,8 @@ def format_alert(listing: Listing) -> str:
         lines.append(f"\U0001F465 {listing.roommates} roommates")
     if listing.toilets is not None:
         lines.append(f"\U0001F6BF {listing.toilets} bathrooms")
+    if listing.available_rooms is not None:
+        lines.append(f"\U0001F6AA {listing.available_rooms} room(s) available now")
 
     address = listing.address or (
         ", ".join(listing.neighborhoods_mentioned) if listing.neighborhoods_mentioned else None
@@ -108,11 +114,18 @@ def _post(bot_token: str, method: str, payload: dict, timeout: int) -> dict | No
         return None
 
 
-def send_listing(bot_token: str, chat_id: str, listing: Listing, conn=None) -> bool:
-    """Send one listing alert: an album if it has 2+ photos, a single photo
-    if it has one, else plain text — each falling back to plain text if it
-    fails, so the alert always gets through."""
-    text = format_alert(listing)
+def send_listing(
+    bot_token: str, chat_id: str, listing: Listing, profile: SearchConfig, score: int, conn=None
+) -> bool:
+    """Send one listing alert for one matched profile: an album if it has
+    2+ photos, a single photo if it has one, else plain text — each falling
+    back to plain text if it fails, so the alert always gets through.
+
+    Called once per profile a listing matched (see cli.py), each with that
+    profile's own score — a listing can score very differently under two
+    profiles with different price ranges, so the score isn't computed once
+    and reused."""
+    text = format_alert(listing, profile, score)
     keyboard = _alert_keyboard(conn, listing.post_url)
     images = listing.images or []
 

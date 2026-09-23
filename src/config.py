@@ -19,8 +19,15 @@ class FacebookGroup:
 
 @dataclass
 class SearchConfig:
-    """Your criteria for the apartment you're looking to sublet FROM someone."""
+    """One named set of criteria for the apartment you're looking to sublet
+    FROM someone — e.g. a "single room" profile and a separate "two rooms"
+    profile for searching with a friend. Every post is checked against every
+    configured profile in one pass (see config.yaml's `searches:` list)."""
 
+    name: str = "default"
+    # Emoji prefix on this profile's Telegram alerts, so two profiles read as
+    # visually distinct at a glance (Telegram has no literal text-color API).
+    emoji: str = "\U0001F3E0"
     price_min: int | None = None
     price_max: int | None = None
     min_rooms: float | None = None
@@ -29,6 +36,10 @@ class SearchConfig:
     max_roommates: int | None = None
     min_bathrooms: int | None = None
     separate_toilet_shower_max_roommates: int | None = None
+    # How many rooms/spots the POST must be offering right now — distinct
+    # from min_rooms (the apartment's total size). None = no constraint.
+    min_available_rooms: int | None = None
+    max_available_rooms: int | None = None
 
 
 @dataclass
@@ -58,7 +69,7 @@ class LLMConfig:
 @dataclass
 class ZoneConfig:
     """A single target point + straight-line radius a listing is scored
-    against, in addition to (not instead of) search.neighborhoods."""
+    against, in addition to (not instead of) a profile's neighborhoods."""
 
     target_label: str = ""
     target_lat: float | None = None
@@ -74,10 +85,40 @@ class ZoneConfig:
 class Config:
     facebook_groups: list[FacebookGroup]
     posts_per_group: int
-    search: SearchConfig
+    searches: list[SearchConfig]
     telegram: TelegramConfig | None
     llm: LLMConfig
     zone: ZoneConfig
+
+    @property
+    def all_neighborhoods(self) -> list[str]:
+        """The union of every profile's neighborhood list — used at
+        extraction time so a post's neighborhoods_mentioned covers whatever
+        any profile might care about; each profile then filters that down
+        to its own list when matching (see listing_filters.matches)."""
+        seen: list[str] = []
+        for profile in self.searches:
+            for n in profile.neighborhoods:
+                if n not in seen:
+                    seen.append(n)
+        return seen
+
+
+def _search_profile(raw: dict, default_name: str = "default") -> SearchConfig:
+    return SearchConfig(
+        name=raw.get("name", default_name),
+        emoji=raw.get("emoji", "\U0001F3E0"),
+        price_min=raw.get("price_min"),
+        price_max=raw.get("price_max"),
+        min_rooms=raw.get("min_rooms"),
+        neighborhoods=raw.get("neighborhoods") or [],
+        excluded_keywords=raw.get("excluded_keywords") or [],
+        max_roommates=raw.get("max_roommates"),
+        min_bathrooms=raw.get("min_bathrooms"),
+        separate_toilet_shower_max_roommates=raw.get("separate_toilet_shower_max_roommates"),
+        min_available_rooms=raw.get("min_available_rooms"),
+        max_available_rooms=raw.get("max_available_rooms"),
+    )
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -85,19 +126,12 @@ def load_config(path: Path | None = None) -> Config:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
-    search_raw = raw.get("search") or {}
-    search = SearchConfig(
-        price_min=search_raw.get("price_min"),
-        price_max=search_raw.get("price_max"),
-        min_rooms=search_raw.get("min_rooms"),
-        neighborhoods=search_raw.get("neighborhoods") or [],
-        excluded_keywords=search_raw.get("excluded_keywords") or [],
-        max_roommates=search_raw.get("max_roommates"),
-        min_bathrooms=search_raw.get("min_bathrooms"),
-        separate_toilet_shower_max_roommates=search_raw.get(
-            "separate_toilet_shower_max_roommates"
-        ),
-    )
+    if "searches" in raw:
+        searches = [_search_profile(s) for s in raw["searches"]]
+    else:
+        # Legacy single `search:` block — wrap it as one profile so old
+        # config files keep working unchanged.
+        searches = [_search_profile(raw.get("search") or {})]
 
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -122,7 +156,7 @@ def load_config(path: Path | None = None) -> Config:
     config = Config(
         facebook_groups=[FacebookGroup(**g) for g in raw["facebook_groups"]],
         posts_per_group=raw["posts_per_group"],
-        search=search,
+        searches=searches,
         telegram=telegram,
         llm=llm,
         zone=zone,
@@ -138,15 +172,31 @@ def validate(config: Config) -> None:
         problems.append("facebook_groups is empty — nothing to scan")
     if config.posts_per_group <= 0:
         problems.append(f"posts_per_group ({config.posts_per_group}) must be > 0")
-    if (
-        config.search.price_min is not None
-        and config.search.price_max is not None
-        and config.search.price_min > config.search.price_max
-    ):
-        problems.append(
-            f"search.price_min ({config.search.price_min}) > "
-            f"search.price_max ({config.search.price_max})"
-        )
+    if not config.searches:
+        problems.append("searches is empty — nothing to match against")
+    names = [p.name for p in config.searches]
+    if len(names) != len(set(names)):
+        problems.append(f"search profile names must be unique, got: {names}")
+    for profile in config.searches:
+        if (
+            profile.price_min is not None
+            and profile.price_max is not None
+            and profile.price_min > profile.price_max
+        ):
+            problems.append(
+                f"searches[{profile.name!r}].price_min ({profile.price_min}) > "
+                f"price_max ({profile.price_max})"
+            )
+        if (
+            profile.min_available_rooms is not None
+            and profile.max_available_rooms is not None
+            and profile.min_available_rooms > profile.max_available_rooms
+        ):
+            problems.append(
+                f"searches[{profile.name!r}].min_available_rooms "
+                f"({profile.min_available_rooms}) > max_available_rooms "
+                f"({profile.max_available_rooms})"
+            )
     if config.zone.active and config.zone.max_distance_meters <= 0:
         problems.append(
             f"zone.max_distance_meters ({config.zone.max_distance_meters}) must be > 0"

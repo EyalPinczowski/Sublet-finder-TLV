@@ -101,3 +101,32 @@ def test_skips_duplicate_post_url(monkeypatch, tmp_path):
         sheets.save_listing(listing)
 
     ws.append_row.assert_not_called()
+
+
+def test_suitable_for_one_person():
+    assert sheets._suitable_for(1) == "1 person"
+
+
+def test_suitable_for_two_people():
+    assert sheets._suitable_for(2) == "2 people"
+
+
+def test_suitable_for_unknown_is_blank():
+    assert sheets._suitable_for(None) == ""
+
+
+def test_save_listing_writes_suitable_for_column(monkeypatch, tmp_path):
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing(available_rooms=2))
+
+    row = ws.append_row.call_args.args[0]
+    assert row[sheets.HEADER.index("suitable_for")] == "2 people"

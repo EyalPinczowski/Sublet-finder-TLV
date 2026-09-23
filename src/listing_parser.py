@@ -42,6 +42,28 @@ SEPARATE_TOILET_SHOWER_KEYWORDS = [
     "טואלט נפרד",
 ]
 
+# How many rooms/spots are being offered RIGHT NOW — distinct from ROOMS_RE
+# (the apartment's total size). "2 חדרים פנויים"/"שני חדרים מתפנים" = 2 open
+# spots; a bare "חדר פנוי"/"מתפנה חדר" (no number) = 1. Best-effort, like the
+# rest of this fallback parser — the LLM path (llm_extractor.py) handles this
+# far more reliably.
+_HE_NUM_WORDS = {"שני": 2, "שתי": 2, "שלושה": 3, "שלוש": 3, "ארבעה": 4, "ארבע": 4}
+_AVAILABLE_ROOMS_NUM_RE = re.compile(
+    r"(\d+|" + "|".join(_HE_NUM_WORDS) + r")\s*חדרים\s*(?:פנויים|מתפנים)"
+)
+_AVAILABLE_ROOMS_ONE_RE = re.compile(r"חדר\s*פנוי|מתפנה\s*חדר")
+
+
+def _extract_available_rooms(text: str) -> int | None:
+    match = _AVAILABLE_ROOMS_NUM_RE.search(text)
+    if match:
+        token = match.group(1)
+        return int(token) if token.isdigit() else _HE_NUM_WORDS[token]
+    if _AVAILABLE_ROOMS_ONE_RE.search(text):
+        return 1
+    return None
+
+
 # Israeli mobile numbers, tolerating spaces/dots/dashes and a +972/972/0
 # prefix. Best-effort — used only when the LLM path (llm_extractor.py) isn't
 # available, mirroring bgu-housing-bot's _normalize_phone.
@@ -152,6 +174,7 @@ def parse_listing(
         roommates=_extract_roommates(text),
         toilets=_extract_toilets(text),
         separate_toilet_shower=_has_separate_toilet_shower(text),
+        available_rooms=_extract_available_rooms(text),
         address=address,
         phone=_extract_phone(text),
         images=images or [],

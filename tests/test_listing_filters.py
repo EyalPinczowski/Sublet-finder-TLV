@@ -138,3 +138,50 @@ def test_missing_zone_config_never_regresses_keyword_only_behavior():
     listing = make_listing(neighborhoods_mentioned=[], distance_m=100)
     cfg = SearchConfig(neighborhoods=["florentin", "rothschild"])
     assert matches(listing, cfg, zone_cfg=None) is False
+
+
+def test_neighborhoods_mentioned_is_narrowed_to_this_profiles_own_list():
+    # neighborhoods_mentioned is extracted once against the UNION of every
+    # configured profile's neighborhoods (Config.all_neighborhoods) — a
+    # profile must only match on keywords that are actually in ITS OWN
+    # list, not any profile's.
+    listing = make_listing(neighborhoods_mentioned=["rothschild"])  # from another profile
+    cfg = SearchConfig(neighborhoods=["florentin"])
+    assert matches(listing, cfg) is False
+
+
+def test_available_rooms_rejects_below_minimum():
+    listing = make_listing(available_rooms=1)
+    cfg = SearchConfig(min_available_rooms=2)
+    assert matches(listing, cfg) is False
+
+
+def test_available_rooms_allows_at_minimum():
+    listing = make_listing(available_rooms=2)
+    cfg = SearchConfig(min_available_rooms=2)
+    assert matches(listing, cfg) is True
+
+
+def test_available_rooms_rejects_above_maximum():
+    listing = make_listing(available_rooms=3)
+    cfg = SearchConfig(min_available_rooms=1, max_available_rooms=1)
+    assert matches(listing, cfg) is False
+
+
+def test_available_rooms_missing_is_not_filtered_out():
+    listing = make_listing(available_rooms=None)
+    cfg = SearchConfig(min_available_rooms=2)
+    assert matches(listing, cfg) is True
+
+
+def test_single_vs_two_room_profiles_distinguish_a_listing():
+    single = SearchConfig(name="single room", min_available_rooms=1, max_available_rooms=1)
+    pair = SearchConfig(name="two rooms", min_available_rooms=2)
+
+    one_room_listing = make_listing(available_rooms=1)
+    assert matches(one_room_listing, single) is True
+    assert matches(one_room_listing, pair) is False
+
+    two_room_listing = make_listing(available_rooms=2)
+    assert matches(two_room_listing, single) is False
+    assert matches(two_room_listing, pair) is True

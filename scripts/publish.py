@@ -36,9 +36,11 @@ def _card(conn, row) -> str:
         if row.post_url.startswith("http")
         else ""
     )
+    profiles = ", ".join(row.profile_names()) or "?"
     return (
         f'<div class="card">{img_html}'
         f"<h3>{row.price or '?'} ILS &middot; {row.rooms or '?'} rooms &middot; score {score}</h3>"
+        f'<p class="matched">Matched: {html.escape(profiles)}</p>'
         f'<p class="addr">{html.escape(row.address or row.neighborhoods or "area unknown")}</p>'
         f"<p>{html.escape(row.summary or row.raw_text[:200])}</p>"
         f"<p>{html.escape(row.phone or '')}</p>"
@@ -58,6 +60,8 @@ def render_snapshot(conn) -> str:
 body {{ font-family: sans-serif; max-width: 700px; margin: 2rem auto; padding: 0 1rem; }}
 .card {{ border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }}
 .addr {{ font-weight: bold; }}
+.matched {{ display: inline-block; background: #eef; border-radius: 4px; padding: 0.1rem 0.5rem;
+            font-size: 0.85em; }}
 img {{ max-width: 100%; border-radius: 4px; }}
 </style></head>
 <body>

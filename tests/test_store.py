@@ -34,7 +34,7 @@ def test_content_hash_key_differs_for_different_address():
 def test_insert_and_find_by_content_hash(isolated_db):
     listing = make_listing()
     with store.connect() as conn:
-        store.insert_listing(conn, listing, matched=True)
+        store.insert_listing(conn, listing, matched_profiles=["default"])
         found = store.find_by_content_hash(conn, store.content_hash_key(listing))
         assert found == listing.post_url
 
@@ -42,8 +42,8 @@ def test_insert_and_find_by_content_hash(isolated_db):
 def test_insert_ignores_duplicate_post_url(isolated_db):
     listing = make_listing()
     with store.connect() as conn:
-        first_id = store.insert_listing(conn, listing, matched=True)
-        second_id = store.insert_listing(conn, listing, matched=True)
+        first_id = store.insert_listing(conn, listing, matched_profiles=["default"])
+        second_id = store.insert_listing(conn, listing, matched_profiles=["default"])
     assert first_id
     assert second_id is None  # INSERT OR IGNORE hit the UNIQUE constraint
 
@@ -52,14 +52,14 @@ def test_listing_seen(isolated_db):
     listing = make_listing()
     with store.connect() as conn:
         assert store.listing_seen(conn, listing.post_url) is False
-        store.insert_listing(conn, listing, matched=True)
+        store.insert_listing(conn, listing, matched_profiles=["default"])
         assert store.listing_seen(conn, listing.post_url) is True
 
 
 def test_dismiss_hides_listing_from_default_listing(isolated_db):
     listing = make_listing()
     with store.connect() as conn:
-        store.insert_listing(conn, listing, matched=True)
+        store.insert_listing(conn, listing, matched_profiles=["default"])
         assert len(store.list_listings(conn, matched_only=True)) == 1
         store.add_mark(conn, listing.post_url, "user1", "dismiss")
         assert store.list_listings(conn, matched_only=True) == []
@@ -69,7 +69,7 @@ def test_dismiss_hides_listing_from_default_listing(isolated_db):
 def test_effective_score_adds_save_bonus(isolated_db):
     listing = make_listing(score=50)
     with store.connect() as conn:
-        store.insert_listing(conn, listing, matched=True)
+        store.insert_listing(conn, listing, matched_profiles=["default"])
         row = store.list_listings(conn, matched_only=True)[0]
         assert store.effective_score(conn, row) == 50
         store.add_mark(conn, listing.post_url, "user1", "save")
@@ -79,7 +79,7 @@ def test_effective_score_adds_save_bonus(isolated_db):
 def test_add_mark_upserts_on_conflict(isolated_db):
     listing = make_listing()
     with store.connect() as conn:
-        store.insert_listing(conn, listing, matched=True)
+        store.insert_listing(conn, listing, matched_profiles=["default"])
         store.add_mark(conn, listing.post_url, "user1", "save")
         store.add_mark(conn, listing.post_url, "user1", "dismiss")
         assert store.is_dismissed(conn, listing.post_url) is True
@@ -107,6 +107,6 @@ def test_post_url_for_unknown_token_is_none(isolated_db):
 def test_image_urls_round_trip_through_json(isolated_db):
     listing = make_listing(images=["https://example.com/a.jpg", "https://example.com/b.jpg"])
     with store.connect() as conn:
-        store.insert_listing(conn, listing, matched=True)
+        store.insert_listing(conn, listing, matched_profiles=["default"])
         row = store.list_listings(conn, matched_only=True)[0]
         assert row.image_urls() == ["https://example.com/a.jpg", "https://example.com/b.jpg"]

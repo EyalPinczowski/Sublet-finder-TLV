@@ -14,6 +14,10 @@ class Listing:
     roommates: int | None = None
     toilets: int | None = None
     separate_toilet_shower: bool = False
+    # How many rooms/spots this POST is currently offering for rent — distinct
+    # from `rooms` (the apartment's total size). None when it can't be
+    # determined.
+    available_rooms: int | None = None
     # The free-text address/area as written in the post (distinct from
     # neighborhoods_mentioned, which is only the matched-keyword subset).
     address: str | None = None

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS listings (
     neighborhoods TEXT,  -- comma-joined
     roommates INTEGER,
     toilets INTEGER,
+    available_rooms INTEGER,
     address TEXT,
     phone TEXT,
     images TEXT,  -- JSON-encoded list of URLs
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS listings (
     distance_m REAL,
     score INTEGER,
     content_hash TEXT,
-    matched INTEGER NOT NULL DEFAULT 0,  -- 1 if it passed your search filters
+    matched INTEGER NOT NULL DEFAULT 0,  -- 1 if it matched ANY search profile
+    matched_profiles TEXT,  -- comma-joined names of every profile it matched
     notified INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -72,6 +74,7 @@ class ListingRow:
     neighborhoods: str | None
     roommates: int | None
     toilets: int | None
+    available_rooms: int | None
     address: str | None
     phone: str | None
     images: str | None
@@ -82,6 +85,7 @@ class ListingRow:
     score: int | None
     content_hash: str | None
     matched: int
+    matched_profiles: str | None
     notified: int
     created_at: str
 
@@ -90,6 +94,9 @@ class ListingRow:
             return json.loads(self.images) if self.images else []
         except json.JSONDecodeError:
             return []
+
+    def profile_names(self) -> list[str]:
+        return [n for n in (self.matched_profiles or "").split(", ") if n]
 
 
 @contextmanager
@@ -134,13 +141,13 @@ def find_by_content_hash(conn, content_hash: str) -> str | None:
     return row["post_url"] if row else None
 
 
-def insert_listing(conn, listing, matched: bool) -> int | None:
+def insert_listing(conn, listing, matched_profiles: list[str]) -> int | None:
     cur = conn.execute(
         "INSERT OR IGNORE INTO listings "
         "(post_url, group_name, raw_text, price, rooms, neighborhoods, "
-        " roommates, toilets, address, phone, images, summary, lat, lon, "
-        " distance_m, score, content_hash, matched) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " roommates, toilets, available_rooms, address, phone, images, summary, lat, lon, "
+        " distance_m, score, content_hash, matched, matched_profiles) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             listing.post_url,
             listing.group_name,
@@ -150,6 +157,7 @@ def insert_listing(conn, listing, matched: bool) -> int | None:
             ", ".join(listing.neighborhoods_mentioned),
             listing.roommates,
             listing.toilets,
+            listing.available_rooms,
             listing.address,
             listing.phone,
             json.dumps(listing.images or []),
@@ -159,7 +167,8 @@ def insert_listing(conn, listing, matched: bool) -> int | None:
             listing.distance_m,
             listing.score,
             content_hash_key(listing),
-            1 if matched else 0,
+            1 if matched_profiles else 0,
+            ", ".join(matched_profiles),
         ),
     )
     # cur.lastrowid isn't None when INSERT OR IGNORE hits the UNIQUE

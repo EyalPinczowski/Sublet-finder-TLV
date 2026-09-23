@@ -17,7 +17,7 @@ def _seed(conn):
         score=80,
         images=["https://example.com/a.jpg"],
     )
-    store.insert_listing(conn, listing, matched=True)
+    store.insert_listing(conn, listing, matched_profiles=["default"])
     return listing
 
 

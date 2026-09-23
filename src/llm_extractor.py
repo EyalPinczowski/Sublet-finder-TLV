@@ -35,7 +35,11 @@ _SYSTEM_PROMPT = """אתה מנתח מודעות סאבלט/שכירות דיר�
 - is_offer = true רק אם הפוסט *מציע* דירה/חדר/סאבלט להשכרה. false אם מדובר במישהו
   שמחפש דירה/חדר לעצמו ("מחפש/ת דירה"), או בפוסט שאינו קשור לשכירות דירות כלל.
 - price_ils = שכר הדירה החודשי הכולל (לא לחדר/לאדם) בשקלים. אם לא צוין — null.
-- rooms = מספר החדרים הכולל בדירה.
+- rooms = מספר החדרים הכולל בדירה (הגודל הכולל של הדירה, לא כמה פנויים).
+- available_rooms = כמה חדרים/מקומות פנויים להשכרה *כרגע* מוצעים בפוסט הזה —
+  שונה מ-rooms! לדוגמה: "מתפנה חדר בדירת 3 חדרים" -> available_rooms=1,
+  rooms=3. "שני חדרים פנויים בדירה משותפת" -> available_rooms=2. אם לא ניתן
+  לקבוע כמה פנויים — null.
 - address = הכתובת או האזור המדויקים ביותר כפי שמופיעים במודעה (רחוב ומספר בית אם
   יש, או שם שכונה/אזור מדובר). null אם אין שום אזכור מיקום.
 - roommates = מספר השותפים הכולל בדירה (כולל השוכר החדש).
@@ -50,6 +54,7 @@ class ListingExtract(BaseModel):
     is_offer: bool
     price_ils: Optional[int] = None
     rooms: Optional[float] = None
+    available_rooms: Optional[int] = None
     address: Optional[str] = None
     roommates: Optional[int] = None
     toilets: Optional[int] = None
@@ -154,6 +159,7 @@ def extract(
         raw_text=text,
         price=e.price_ils,
         rooms=e.rooms,
+        available_rooms=e.available_rooms,
         neighborhoods_mentioned=_matched_neighborhoods(text, known_neighborhoods or []),
         roommates=e.roommates,
         toilets=e.toilets,

@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, patch
 
+from src.config import SearchConfig
 from src.listing_models import Listing
 from src.telegram_notifier import format_alert, send_listing
 
@@ -22,9 +23,15 @@ def make_listing(**overrides) -> Listing:
     return Listing(**defaults)
 
 
+def make_profile(**overrides) -> SearchConfig:
+    defaults = dict(name="single room", emoji="\U0001F7E2")
+    defaults.update(overrides)
+    return SearchConfig(**defaults)
+
+
 def test_format_alert_includes_key_fields():
     listing = make_listing()
-    text = format_alert(listing)
+    text = format_alert(listing, make_profile(), 80)
     assert "3300" in text
     assert "3.0 rooms" in text
     assert "2 roommates" in text
@@ -37,15 +44,37 @@ def test_format_alert_includes_key_fields():
     assert listing.summary in text
 
 
+def test_format_alert_shows_profile_emoji_and_name():
+    profile = make_profile(name="two rooms (with a friend)", emoji="\U0001F535")
+    text = format_alert(make_listing(), profile, 80)
+    assert "\U0001F535" in text
+    assert "two rooms (with a friend)" in text
+
+
+def test_format_alert_shows_available_rooms():
+    listing = make_listing(available_rooms=2)
+    assert "2 room(s) available now" in format_alert(listing, make_profile(), 80)
+
+
+def test_format_alert_uses_given_score_not_listing_score():
+    # score is passed explicitly per profile, since the same listing can
+    # score differently under two profiles with different price ranges —
+    # listing.score (used for DB sorting) must not leak into the alert text.
+    listing = make_listing(score=999)
+    text = format_alert(listing, make_profile(), 42)
+    assert "(42)" in text
+    assert "(999)" not in text
+
+
 def test_format_alert_omits_post_link_for_synthetic_key():
     listing = make_listing(post_url="text:abcd1234")
-    text = format_alert(listing)
+    text = format_alert(listing, make_profile(), 80)
     assert "text:abcd1234" not in text
 
 
 def test_format_alert_shows_distance_when_geocoded():
     listing = make_listing(distance_m=350.4)
-    assert "350m from target zone" in format_alert(listing)
+    assert "350m from target zone" in format_alert(listing, make_profile(), 80)
 
 
 def _mock_response(ok=True):
@@ -60,7 +89,7 @@ def test_send_listing_plain_text_when_no_images():
     with patch(
         "src.telegram_notifier.requests.post", return_value=_mock_response(True)
     ) as mock_post:
-        assert send_listing("token", "chat", listing) is True
+        assert send_listing("token", "chat", listing, make_profile(), 80) is True
         assert mock_post.call_count == 1
         assert "sendMessage" in mock_post.call_args.args[0]
 
@@ -70,7 +99,7 @@ def test_send_listing_sends_single_photo():
     with patch(
         "src.telegram_notifier.requests.post", return_value=_mock_response(True)
     ) as mock_post:
-        assert send_listing("token", "chat", listing) is True
+        assert send_listing("token", "chat", listing, make_profile(), 80) is True
         assert mock_post.call_count == 1
         assert "sendPhoto" in mock_post.call_args.args[0]
 
@@ -79,7 +108,7 @@ def test_send_listing_falls_back_to_text_when_photo_fails():
     listing = make_listing(images=["https://example.com/a.jpg"])
     responses = [_mock_response(False), _mock_response(True)]
     with patch("src.telegram_notifier.requests.post", side_effect=responses) as mock_post:
-        assert send_listing("token", "chat", listing) is True
+        assert send_listing("token", "chat", listing, make_profile(), 80) is True
         methods = [call.args[0] for call in mock_post.call_args_list]
         assert any("sendPhoto" in m for m in methods)
         assert any("sendMessage" in m for m in methods)
@@ -90,14 +119,14 @@ def test_send_listing_sends_album_for_multiple_photos():
     with patch(
         "src.telegram_notifier.requests.post", return_value=_mock_response(True)
     ) as mock_post:
-        assert send_listing("token", "chat", listing) is True
+        assert send_listing("token", "chat", listing, make_profile(), 80) is True
         assert "sendMediaGroup" in mock_post.call_args_list[0].args[0]
 
 
 def test_send_listing_falls_back_to_text_when_all_sends_fail():
     listing = make_listing(images=[])
     with patch("src.telegram_notifier.requests.post", return_value=_mock_response(False)):
-        assert send_listing("token", "chat", listing) is False
+        assert send_listing("token", "chat", listing, make_profile(), 80) is False
 
 
 def test_send_listing_includes_vote_buttons_when_conn_given(isolated_db):
@@ -108,7 +137,7 @@ def test_send_listing_includes_vote_buttons_when_conn_given(isolated_db):
         with patch(
             "src.telegram_notifier.requests.post", return_value=_mock_response(True)
         ) as mock_post:
-            send_listing("token", "chat", listing, conn=conn)
+            send_listing("token", "chat", listing, make_profile(), 80, conn=conn)
             payload = mock_post.call_args.kwargs["json"]
             assert "reply_markup" in payload
             assert "save|" in str(payload["reply_markup"])

@@ -6,6 +6,7 @@ from src.config import (
     LLMConfig,
     SearchConfig,
     ZoneConfig,
+    load_config,
     validate,
 )
 
@@ -14,7 +15,7 @@ def make_config(**overrides) -> Config:
     defaults = dict(
         facebook_groups=[FacebookGroup(name="g", url="https://facebook.com/groups/1")],
         posts_per_group=10,
-        search=SearchConfig(price_min=2500, price_max=3600),
+        searches=[SearchConfig(name="default", price_min=2500, price_max=3600)],
         telegram=None,
         llm=LLMConfig(),
         zone=ZoneConfig(target_lat=32.0768, target_lon=34.7742, max_distance_meters=1000),
@@ -39,7 +40,41 @@ def test_zero_posts_per_group_rejected():
 
 def test_price_min_over_price_max_rejected():
     with pytest.raises(SystemExit):
-        validate(make_config(search=SearchConfig(price_min=4000, price_max=3000)))
+        validate(make_config(searches=[SearchConfig(price_min=4000, price_max=3000)]))
+
+
+def test_empty_searches_rejected():
+    with pytest.raises(SystemExit):
+        validate(make_config(searches=[]))
+
+
+def test_duplicate_search_profile_names_rejected():
+    with pytest.raises(SystemExit):
+        validate(
+            make_config(
+                searches=[SearchConfig(name="a"), SearchConfig(name="a")]
+            )
+        )
+
+
+def test_min_available_rooms_over_max_rejected():
+    with pytest.raises(SystemExit):
+        validate(
+            make_config(
+                searches=[SearchConfig(min_available_rooms=3, max_available_rooms=1)]
+            )
+        )
+
+
+def test_multiple_distinct_profiles_pass():
+    validate(
+        make_config(
+            searches=[
+                SearchConfig(name="single room", min_available_rooms=1, max_available_rooms=1),
+                SearchConfig(name="two rooms", min_available_rooms=2),
+            ]
+        )
+    )
 
 
 def test_zero_max_distance_rejected_when_zone_active():
@@ -76,3 +111,72 @@ def test_llm_config_active_requires_key_and_enabled():
 def test_zone_config_active_requires_both_coordinates():
     assert ZoneConfig(target_lat=32.0, target_lon=None).active is False
     assert ZoneConfig(target_lat=32.0, target_lon=34.7).active is True
+
+
+def test_all_neighborhoods_is_the_union_across_profiles():
+    config = make_config(
+        searches=[
+            SearchConfig(name="single room", neighborhoods=["florentin", "rothschild"]),
+            SearchConfig(name="two rooms", neighborhoods=["rothschild", "habima"]),
+        ]
+    )
+    assert config.all_neighborhoods == ["florentin", "rothschild", "habima"]
+
+
+def test_search_config_defaults():
+    profile = SearchConfig()
+    assert profile.name == "default"
+    assert profile.min_available_rooms is None
+    assert profile.max_available_rooms is None
+
+
+_BASE_YAML = """
+facebook_groups:
+  - name: "g"
+    url: "https://facebook.com/groups/1"
+posts_per_group: 10
+"""
+
+
+def test_load_config_reads_multiple_named_profiles(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        _BASE_YAML
+        + """
+searches:
+  - name: "single room"
+    emoji: "🟢"
+    price_min: 2500
+    price_max: 3600
+    min_available_rooms: 1
+    max_available_rooms: 1
+  - name: "two rooms"
+    emoji: "🔵"
+    price_min: 5000
+    min_available_rooms: 2
+"""
+    )
+    config = load_config(path)
+    assert [p.name for p in config.searches] == ["single room", "two rooms"]
+    assert config.searches[0].emoji == "\U0001F7E2"
+    assert config.searches[1].min_available_rooms == 2
+
+
+def test_load_config_supports_legacy_single_search_block(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        _BASE_YAML
+        + """
+search:
+  price_min: 2500
+  price_max: 3600
+"""
+    )
+    config = load_config(path)
+    assert len(config.searches) == 1
+    assert config.searches[0].name == "default"
+    assert config.searches[0].price_min == 2500
