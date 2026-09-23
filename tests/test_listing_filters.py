@@ -142,6 +142,41 @@ def test_no_broker_terms_at_all_is_unaffected():
     assert matches(listing, SearchConfig()) is True
 
 
+def test_girls_only_mention_filters_out_listing():
+    listing = make_listing(raw_text="סאבלט בפלורנטין, רק לבנות")
+    assert matches(listing, SearchConfig()) is False
+
+
+def test_girls_only_bilvad_variant_filters_out_listing():
+    listing = make_listing(raw_text="סאבלט בפלורנטין, בנות בלבד")
+    assert matches(listing, SearchConfig()) is False
+
+
+def test_girls_only_apartment_label_filters_out_listing():
+    listing = make_listing(raw_text="דירת בנות בפלורנטין, חדר פנוי")
+    assert matches(listing, SearchConfig()) is False
+
+
+def test_girls_only_english_filters_out_listing():
+    listing = make_listing(raw_text="Sublet in Florentin, girls only")
+    assert matches(listing, SearchConfig()) is False
+
+
+def test_not_girls_only_is_not_filtered_out():
+    listing = make_listing(raw_text="סאבלט בפלורנטין, לא רק לבנות")
+    assert matches(listing, SearchConfig()) is True
+
+
+def test_negated_and_real_girls_only_mention_still_filters_out():
+    listing = make_listing(raw_text="לא רק לבנות לדירה זו, אך רק לבנות לדירה הבאה")
+    assert matches(listing, SearchConfig()) is False
+
+
+def test_no_girls_only_terms_at_all_is_unaffected():
+    listing = make_listing(raw_text="sublet in florentin, 4500 nis")
+    assert matches(listing, SearchConfig()) is True
+
+
 def test_rejects_over_max_roommates():
     listing = make_listing(roommates=4)
     cfg = SearchConfig(max_roommates=3)

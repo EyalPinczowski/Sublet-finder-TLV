@@ -418,3 +418,9 @@ Nominatim, or Google Sheets calls, and they never touch `data/listings.db`
   direct-from-tenant post advertising that it's *not* brokered. This is a
   fixed rule, not a per-profile `excluded_keywords` entry, since it needs
   the negation handling to avoid dropping exactly the listings you want.
+- **"Girls only" listings are filtered out automatically** the same way —
+  an explicit exclusivity claim ("רק לבנות"/"בנות בלבד"/"דירת בנות", or
+  "girls/women/females only" in English) drops a post, unless it's negated
+  ("לא רק לבנות"/"not girls only"). A post that just mentions the current
+  residents are women (without an explicit "only"/"בלבד") is left alone —
+  only an explicit exclusivity claim is treated as a hard gate.

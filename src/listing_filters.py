@@ -29,6 +29,41 @@ def _mentions_broker(raw_text: str) -> bool:
     return bool(_BROKER_TERM_RE.search(stripped))
 
 
+# "רק לבנות/לנשים/לבחורות", "בנות/נשים/בחורות בלבד", "דירת בנות", and the
+# English equivalents — an explicit exclusivity claim, not just any
+# mention of "בנות" (which would false-positive on e.g. "מתאים לבנות
+# ולבנים", "suitable for girls and guys"). "לא רק לבנות"/"not girls only"
+# is the OPPOSITE signal (explicitly open to everyone) and is stripped
+# first, same as the broker filter's "ללא תיווך" handling — otherwise
+# "לא רק לבנות" would match "רק לבנות" as a substring and wrongly filter
+# out a listing that's actually open to all.
+_GIRLS_ONLY_TERM_RE = re.compile(
+    r"רק\s+ל(?:בנות|נשים|בחורות)"
+    r"|(?:בנות|נשים|בחורות)\s+בלבד"
+    r"|דירת\s+בנות"
+    r"|(?:girls?|females?|women)\s+only"
+    r"|only\s+(?:for\s+)?(?:girls?|females?|women)",
+    re.IGNORECASE,
+)
+_GIRLS_ONLY_NEGATED_RE = re.compile(
+    r"לא\s+רק\s+ל(?:בנות|נשים|בחורות)"
+    r"|לא\s+(?:בנות|נשים|בחורות)\s+בלבד"
+    r"|not\s+(?:girls?|females?|women)\s+only"
+    r"|not\s+only\s+(?:for\s+)?(?:girls?|females?|women)",
+    re.IGNORECASE,
+)
+
+
+def _mentions_girls_only(raw_text: str) -> bool:
+    """True if the post restricts the room/apartment to women/girls only.
+    "לא רק לבנות"/"not girls only" is the OPPOSITE signal — explicitly
+    open to everyone — so those negated mentions are stripped before
+    checking for a real restriction."""
+    text = raw_text or ""
+    stripped = _GIRLS_ONLY_NEGATED_RE.sub("", text)
+    return bool(_GIRLS_ONLY_TERM_RE.search(stripped))
+
+
 def _resolve_dates(
     listing: Listing, today: date | None = None
 ) -> tuple[date | None, int | None]:
@@ -141,6 +176,9 @@ def matches_without_location(
             return False
 
     if _mentions_broker(listing.raw_text):
+        return False
+
+    if _mentions_girls_only(listing.raw_text):
         return False
 
     if (
