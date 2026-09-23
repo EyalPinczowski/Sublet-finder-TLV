@@ -65,6 +65,15 @@ _AVAILABLE_ROOMS_NUM_RE = re.compile(
 )
 _AVAILABLE_ROOMS_ONE_RE = re.compile(r"חדר\s*פנוי|מתפנה\s*חדר")
 
+# Fallback when neither "X חדרים פנויים" nor "חדר פנוי" is stated: count
+# bedroom mentions instead ("חדר שינה" -> 1, "שני חדרי שינה" -> 2). Only
+# reached when neither explicit-availability pattern above matched, so a
+# post that DOES say which room is free ("חדר פנוי בדירת 3 חדרי שינה")
+# still correctly returns 1 via the pattern above, not the apartment's
+# total bedroom count from this fallback.
+_BEDROOM_NUM_RE = re.compile(r"(\d+|" + "|".join(_HE_NUM_WORDS) + r")\s*חדרי\s*שינה")
+_BEDROOM_ONE_RE = re.compile(r"חדר\s*שינה(?!\w)")
+
 
 def _extract_available_rooms(text: str) -> int | None:
     match = _AVAILABLE_ROOMS_NUM_RE.search(text)
@@ -72,6 +81,12 @@ def _extract_available_rooms(text: str) -> int | None:
         token = match.group(1)
         return int(token) if token.isdigit() else _HE_NUM_WORDS[token]
     if _AVAILABLE_ROOMS_ONE_RE.search(text):
+        return 1
+    match = _BEDROOM_NUM_RE.search(text)
+    if match:
+        token = match.group(1)
+        return int(token) if token.isdigit() else _HE_NUM_WORDS[token]
+    if _BEDROOM_ONE_RE.search(text):
         return 1
     return None
 

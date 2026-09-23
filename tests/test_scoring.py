@@ -114,6 +114,27 @@ def test_photo_bonus_only_when_images_present():
     assert not any(label == "has photos" for label, _ in breakdown(without_photo, search))
 
 
+def test_living_room_bonus_when_mentioned():
+    search = SearchConfig()
+    with_salon = make_listing(raw_text="חדר שינה, סלון גדול ומרפסת")
+    without_salon = make_listing(raw_text="חדר שינה ומרפסת")
+    assert any(label == "has a living room" for label, _ in breakdown(with_salon, search))
+    assert not any(label == "has a living room" for label, _ in breakdown(without_salon, search))
+
+
+def test_living_room_bonus_skipped_when_negated():
+    search = SearchConfig()
+    listing = make_listing(raw_text="חדר שינה, אין סלון בדירה")
+    assert not any(label == "has a living room" for label, _ in breakdown(listing, search))
+
+
+def test_living_room_bonus_raises_the_total_score():
+    search = SearchConfig()
+    with_salon = make_listing(raw_text="חדר שינה, סלון גדול")
+    without_salon = make_listing(raw_text="חדר שינה")
+    assert score(with_salon, search) > score(without_salon, search)
+
+
 def test_score_is_clamped_0_to_100():
     search = SearchConfig(price_min=3000, price_max=3600, min_rooms=2.0, max_roommates=3)
     zone = ZoneConfig(target_lat=32.0768, target_lon=34.7742, max_distance_meters=1000)

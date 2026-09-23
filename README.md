@@ -135,6 +135,14 @@ the post is offering right now** — a new field, distinct from `min_rooms`
 rooms" mean different things: a post offering one open room in a 3-room
 apartment has `available_rooms: 1` even though `rooms: 3`.
 
+When a post doesn't state an explicit count ("2 חדרים פנויים"/"חדר פנוי")
+but is clearly offering a WHOLE apartment rather than one room in a shared
+one, `available_rooms` is inferred from how many bedrooms are mentioned
+("חדר שינה" -> 1, "שני חדרי שינה" -> 2) — a living room/workspace/balcony
+never counts as a bedroom. This is what stops a 1-bedroom-plus-living-room
+sublet from wrongly matching a "two rooms" profile just because the post
+never spelled out a number.
+
 A post can match more than one profile (e.g. if your profiles' price ranges
 overlap) — it gets a separate alert per profile it matches, each scored
 independently (a listing can score very differently under two profiles with
@@ -198,6 +206,13 @@ match (price unknown)" instead of "New sublet match", and the Sheets row,
 dashboard card, and published snapshot each show a small "potential"
 badge next to the price — a visual cue to double-check that one by hand
 before the rest.
+
+A "potential match" alert with a phone number also gets a **💬 Ask about
+price** button, alongside Save/Dismiss — it opens WhatsApp with a
+pre-filled "what's the monthly price?" message via `wa.me`'s own `text`
+query param, so you just tap Send. This is a plain link button, not bot
+automation: Telegram bots have no API to send a WhatsApp message on your
+behalf, so nothing goes out until you tap Send yourself in WhatsApp.
 
 ### Scan window & scheduling
 

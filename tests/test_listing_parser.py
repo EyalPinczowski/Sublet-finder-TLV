@@ -214,6 +214,23 @@ def test_extract_available_rooms_distinct_from_total_rooms():
     assert _extract_available_rooms(text) == 1
 
 
+def test_extract_available_rooms_falls_back_to_bedroom_count():
+    # A whole-apartment sublet with no explicit "X available" phrasing —
+    # infer from how many bedrooms are mentioned instead.
+    assert _extract_available_rooms("חדר שינה, סלון, חלל עבודה") == 1
+    assert _extract_available_rooms("שני חדרי שינה, סלון גדול") == 2
+
+
+def test_extract_available_rooms_living_room_alone_is_not_a_bedroom():
+    assert _extract_available_rooms("סלון גדול, חלל עבודה, מרפסת") is None
+
+
+def test_extract_available_rooms_prefers_explicit_availability_over_bedroom_count():
+    # "חדר פנוי" already answers "how many are available" — the total
+    # bedroom count of the apartment shouldn't override that.
+    assert _extract_available_rooms("חדר פנוי בדירת 3 חדרי שינה") == 1
+
+
 def test_parse_listing_populates_available_rooms():
     listing = parse_listing(
         "שני חדרים פנויים בדירה משותפת, 5000 שקל",

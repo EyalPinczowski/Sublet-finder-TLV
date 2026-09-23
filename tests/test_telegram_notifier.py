@@ -249,3 +249,59 @@ def test_send_listing_includes_vote_buttons_when_conn_given(isolated_db):
             payload = mock_post.call_args.kwargs["json"]
             assert "reply_markup" in payload
             assert "save|" in str(payload["reply_markup"])
+
+
+# --- price inquiry button: only when price is unknown and a phone was extracted ---
+
+
+def test_price_inquiry_button_present_when_price_unknown():
+    from src.telegram_notifier import _price_inquiry_button
+
+    listing = make_listing(price=None, phone="050-1234567")
+    button = _price_inquiry_button(listing)
+    assert button is not None
+    assert button["url"].startswith("https://wa.me/972501234567?text=")
+
+
+def test_price_inquiry_button_absent_when_price_known():
+    from src.telegram_notifier import _price_inquiry_button
+
+    listing = make_listing(price=3300, phone="050-1234567")
+    assert _price_inquiry_button(listing) is None
+
+
+def test_price_inquiry_button_absent_without_a_phone():
+    from src.telegram_notifier import _price_inquiry_button
+
+    listing = make_listing(price=None, phone=None)
+    assert _price_inquiry_button(listing) is None
+
+
+def test_alert_keyboard_includes_inquiry_button_alongside_vote_buttons(isolated_db):
+    from src import store
+    from src.telegram_notifier import _alert_keyboard
+
+    listing = make_listing(price=None, phone="050-1234567")
+    with store.connect() as conn:
+        keyboard = _alert_keyboard(conn, listing)
+    assert keyboard is not None
+    flat_text = str(keyboard)
+    assert "save|" in flat_text
+    assert "wa.me" in flat_text
+
+
+def test_alert_keyboard_still_works_with_no_conn_and_unknown_price():
+    from src.telegram_notifier import _alert_keyboard
+
+    listing = make_listing(price=None, phone="050-1234567")
+    keyboard = _alert_keyboard(None, listing)
+    assert keyboard is not None
+    assert "wa.me" in str(keyboard)
+    assert "save|" not in str(keyboard)
+
+
+def test_alert_keyboard_none_when_nothing_to_offer():
+    from src.telegram_notifier import _alert_keyboard
+
+    listing = make_listing(price=3300, phone=None)
+    assert _alert_keyboard(None, listing) is None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from urllib.parse import quote
 
 import requests
 
@@ -96,21 +97,43 @@ def format_alert(listing: Listing, profile: SearchConfig, score: int) -> str:
     return "\n".join(lines)
 
 
-def _alert_keyboard(conn, post_url: str) -> dict | None:
-    if conn is None:
+_PRICE_INQUIRY_MESSAGE = "היי! ראיתי את הפוסט שלך על הדירה בפייסבוק - מה המחיר החודשי?"
+
+
+def _price_inquiry_button(listing: Listing) -> dict | None:
+    """A URL button opening WhatsApp with a pre-filled price inquiry — a
+    "potential match" (see format_alert's header) is unverified precisely
+    because the price is unknown, so this is the one-tap way to actually
+    find out. Only offered when there's a real WhatsApp-capable phone
+    number extracted from the post; wa.me's own `text` query param does
+    the pre-filling, no bot-side message-sending involved (Telegram bots
+    have no API to send WhatsApp messages on your behalf, and this
+    project doesn't automate WhatsApp any more than it automates writing
+    to Facebook — you still tap Send yourself)."""
+    wa = _contact_link(listing.phone)
+    if listing.price is not None or not wa:
         return None
-    try:
-        token = store.callback_token(conn, post_url)
-    except Exception:
-        return None
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "⭐ Save", "callback_data": f"save|{token}"},
-                {"text": "\U0001F5D1 Dismiss", "callback_data": f"dismiss|{token}"},
-            ]
-        ]
-    }
+    url = f"{wa}?text={quote(_PRICE_INQUIRY_MESSAGE)}"
+    return {"text": "\U0001F4AC Ask about price", "url": url}
+
+
+def _alert_keyboard(conn, listing: Listing) -> dict | None:
+    rows = []
+    if conn is not None:
+        try:
+            token = store.callback_token(conn, listing.post_url)
+            rows.append(
+                [
+                    {"text": "⭐ Save", "callback_data": f"save|{token}"},
+                    {"text": "\U0001F5D1 Dismiss", "callback_data": f"dismiss|{token}"},
+                ]
+            )
+        except Exception:
+            pass
+    inquiry_button = _price_inquiry_button(listing)
+    if inquiry_button:
+        rows.append([inquiry_button])
+    return {"inline_keyboard": rows} if rows else None
 
 
 def send_text(bot_token: str, chat_id: str, text: str) -> bool:
@@ -188,7 +211,7 @@ def send_listing(
     profiles with different price ranges, so the score isn't computed once
     and reused."""
     text = format_alert(listing, profile, score)
-    keyboard = _alert_keyboard(conn, listing.post_url)
+    keyboard = _alert_keyboard(conn, listing)
     images = listing.images or []
 
     if len(images) >= 2:

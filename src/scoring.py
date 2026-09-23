@@ -14,11 +14,25 @@ alert's "why this score" line can never drift from the number.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from .config import SearchConfig, ZoneConfig
 from .listing_filters import _resolve_dates
 from .listing_models import Listing
+
+# "סלון" ("living room") mentioned in the raw post text — a nice amenity
+# worth a small scoring bump, same negation-stripping pattern as the
+# broker/girls-only filters in listing_filters.py ("אין סלון"/"בלי סלון"
+# is the OPPOSITE signal, so it's stripped before checking for a real
+# mention).
+_LIVING_ROOM_RE = re.compile(r"סלון")
+_NO_LIVING_ROOM_RE = re.compile(r"(?:ללא|בלי|אין)\s+סלון")
+
+
+def _has_living_room(raw_text: str) -> bool:
+    stripped = _NO_LIVING_ROOM_RE.sub("", raw_text or "")
+    return bool(_LIVING_ROOM_RE.search(stripped))
 
 
 def _zone_points(listing: Listing, zone_cfg: Optional[ZoneConfig]) -> tuple[str, int]:
@@ -117,6 +131,8 @@ def breakdown(
     ]
     if listing.images:
         parts.append(("has photos", 5))
+    if _has_living_room(listing.raw_text):
+        parts.append(("has a living room", 5))
     return parts
 
 
