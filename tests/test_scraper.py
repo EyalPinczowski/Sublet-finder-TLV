@@ -236,6 +236,36 @@ def test_post_timestamp_skips_waiting_calls_when_locator_finds_nothing():
     time_loc.first.get_attribute.assert_not_called()
 
 
+# --- _expand_see_more: clicks Facebook's truncation toggle before extraction ---
+
+
+def test_expand_see_more_clicks_when_present():
+    article = MagicMock()
+    toggle = MagicMock()
+    toggle.count.return_value = 1
+    article.locator.return_value = toggle
+    scraper._expand_see_more(article)
+    toggle.first.click.assert_called_once()
+
+
+def test_expand_see_more_noop_when_absent():
+    article = MagicMock()
+    toggle = MagicMock()
+    toggle.count.return_value = 0
+    article.locator.return_value = toggle
+    scraper._expand_see_more(article)
+    toggle.first.click.assert_not_called()
+
+
+def test_expand_see_more_swallows_click_failure():
+    article = MagicMock()
+    toggle = MagicMock()
+    toggle.count.return_value = 1
+    toggle.first.click.side_effect = Exception("stale element")
+    article.locator.return_value = toggle
+    scraper._expand_see_more(article)  # must not raise
+
+
 # --- _extract_one_post: author/permalink locators are count()-checked ---
 
 
@@ -258,6 +288,16 @@ def _make_article(text="post text", author_count=0, author_text="", permalink_co
 
     article.locator.side_effect = locator_side_effect
     return article, author_loc, permalink_loc
+
+
+def test_extract_one_post_calls_expand_see_more(monkeypatch):
+    monkeypatch.setattr(scraper, "_post_timestamp", lambda article: None)
+    monkeypatch.setattr(scraper, "_images", lambda article: [])
+    calls = []
+    monkeypatch.setattr(scraper, "_expand_see_more", lambda article: calls.append(1))
+    article, _, _ = _make_article(text="t")
+    scraper._extract_one_post(article)
+    assert calls == [1]
 
 
 def test_extract_one_post_uses_author_and_permalink_when_present(monkeypatch):

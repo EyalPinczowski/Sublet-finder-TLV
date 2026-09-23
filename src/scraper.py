@@ -250,6 +250,27 @@ def _force_chronological_sort(page: Page) -> bool:
 _CONSECUTIVE_OLD_TO_STOP = 3  # tolerate a stray out-of-order/pinned post
 
 
+_SEE_MORE_SELECTOR = (
+    'div[role="button"]:has-text("See more"), div[role="button"]:has-text("ראה עוד")'
+)
+
+
+def _expand_see_more(article) -> None:
+    """Facebook truncates long posts behind a "See more"/"ראה עוד" toggle —
+    inner_text() only returns what's actually rendered, so a collapsed
+    post's hidden tail (which can include the price, address, or dates)
+    is silently missed unless this is clicked first. Most posts have no
+    such toggle at all, so absence is the common case, not a failure —
+    best-effort and silent on any error, same as every other locator in
+    this file."""
+    try:
+        toggle = article.locator(_SEE_MORE_SELECTOR)
+        if toggle.count() > 0:
+            toggle.first.click(timeout=500)
+    except Exception:
+        pass
+
+
 def _extract_one_post(article) -> RawPost | None:
     """count()-checked before every optional field's locator, same reason
     as _post_timestamp: a "not found" selector otherwise waits out its
@@ -257,6 +278,7 @@ def _extract_one_post(article) -> RawPost | None:
     exact pattern, no recoverable permalink) are common, not exceptional —
     across every post in every group in every scan, that wait time adds
     up to real wall-clock cost for no benefit over failing fast."""
+    _expand_see_more(article)
     try:
         text = article.inner_text(timeout=2000)
     except Exception:
