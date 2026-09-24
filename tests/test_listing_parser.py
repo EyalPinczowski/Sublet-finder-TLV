@@ -133,6 +133,20 @@ def test_extract_price_matches_a_price_label_prefix():
     assert _extract_price("סאבלט בפלורנטין. מחיר: 4500") == 4500
 
 
+def test_extract_price_matches_total_for_period_phrasing():
+    # "2,500 לכל התקופה" has no currency marker, no "per month" phrase,
+    # and no "price:" label — a real gap a user hit on a short-term post.
+    assert _extract_price("2,500 לכל התקופה (גמישה)") == 2500
+
+
+def test_extract_price_matches_letkufa_variant():
+    assert _extract_price("2500 לתקופה") == 2500
+
+
+def test_extract_price_matches_sach_hakol_variant():
+    assert _extract_price('2500 סה"כ') == 2500
+
+
 def test_extract_price_matches_price_label_with_dash():
     assert _extract_price("Sublet in Florentin. Price - 4200") == 4200
 

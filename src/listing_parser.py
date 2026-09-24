@@ -38,7 +38,13 @@ _PRICE_NUMBER = r'(?<!\d)(\d{1,3}(?:[,.]\d{3})+|\d{2,6})(?!\d)'
 PRICE_RE = re.compile(
     _PRICE_NUMBER + r'\s*(?:₪|ש"ח|שקל|nis)'
     r"|" + _PRICE_NUMBER + r"\s*/?\s*(?:לחודש|בחודש|חודשי|per\s*month|a\s*month|monthly)"
-    r"|(?:מחיר|price)\s*[:\-]?\s*" + _PRICE_NUMBER,
+    r"|(?:מחיר|price)\s*[:\-]?\s*" + _PRICE_NUMBER +
+    # An explicit "total for the whole period" phrase ("2,500 לכל
+    # התקופה", "2500 סה״כ") — common for short-term sublets, and already
+    # the right number as-is under this project's price convention (the
+    # TOTAL for the stay), unlike the per-week/per-day rates above.
+    r'|' + _PRICE_NUMBER + r'\s*(?:₪|ש"ח|שקל)?\s*'
+    r'(?:לכל\s*התקופה|לתקופה|סה"?כ|סך\s*הכל|total)',
     re.IGNORECASE,
 )
 # A per-week/per-day RATE ("1000 ש"ח לשבוע", "150 ליום") is a different
