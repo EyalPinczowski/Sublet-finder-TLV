@@ -215,6 +215,15 @@ def test_extract_address_skips_stopword_phrases():
     assert _extract_address("קומה 3, 3000 שקל") is None
 
 
+def test_extract_address_skips_facebook_follow_timestamp_boilerplate():
+    # Facebook's own post-header UI text ("Follow · 2 hours ago"), which
+    # can end up inside raw_text — shaped exactly like a real address
+    # (Hebrew word(s) + a number) but isn't one, and the "N hours ago"
+    # part changes on every later scan, which would otherwise poison
+    # content_hash_key's repost-matching into never matching itself.
+    assert _extract_address("Nirit Natanel · מעקב לפני 2 שעות · סאבלט") is None
+
+
 def test_parse_listing_populates_phone_address_summary_and_images():
     listing = parse_listing(
         "דיזנגוף 120, 050-1234567, 3000 שקל",
@@ -265,6 +274,23 @@ def test_extract_available_rooms_prefers_explicit_availability_over_bedroom_coun
     # "חדר פנוי" already answers "how many are available" — the total
     # bedroom count of the apartment shouldn't override that.
     assert _extract_available_rooms("חדר פנוי בדירת 3 חדרי שינה") == 1
+
+
+def test_extract_available_rooms_my_room_is_one_regardless_of_apartment_size():
+    # "Subletting my room" in a 3-room apartment with another roommate
+    # already living there — only the poster's own room is available,
+    # not the apartment's total size or the existing roommate's room.
+    text = (
+        "Subletting my room 2 min from Dizengoff Square. Beautiful, clean "
+        "3 room apartment. There is one other super nice, clean female "
+        "roommate in the apartment."
+    )
+    assert _extract_available_rooms(text) == 1
+    assert _extract_available_rooms("מסבלטת את החדר שלי בבר גיורא") == 1
+
+
+def test_extract_available_rooms_my_room_does_not_match_my_rooms():
+    assert _extract_available_rooms("Subletting my rooms in the apartment") is None
 
 
 def test_parse_listing_populates_available_rooms():

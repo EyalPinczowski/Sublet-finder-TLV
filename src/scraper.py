@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from playwright.sync_api import Page
 
@@ -86,6 +87,22 @@ def _blocked_reason(page: Page) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _normalize_post_url(url: str) -> str:
+    """Strips Facebook's dynamic tracking query string (__cft__, __tn__,
+    etc.) — regenerated fresh on every page render, so the SAME physical
+    post gets a DIFFERENT full URL on every scan if left in place. That
+    silently defeats listing_seen()'s post_url-based dedup (this
+    project's primary identity signal, see store.py) whenever a post has
+    no address/phone for content_hash_key/phone_hash_key to fall back
+    on — the listing looks "new" every single scan and gets re-alerted
+    every time. The canonical scheme+netloc+path is stable across scans
+    and is all a post is ever meaningfully identified by."""
+    if not url:
+        return url
+    split = urlsplit(url)
+    return urlunsplit((split.scheme, split.netloc, split.path, "", ""))
 
 
 def _text_sig(text: str) -> str:
@@ -303,6 +320,7 @@ def _extract_one_post(article) -> RawPost | None:
             post_url = link_loc.first.get_attribute("href", timeout=500) or ""
     except Exception:
         pass
+    post_url = _normalize_post_url(post_url)
 
     if not post_url:
         # No recoverable permalink (common for comment-less posts) — use a

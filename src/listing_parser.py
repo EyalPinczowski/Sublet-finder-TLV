@@ -94,6 +94,17 @@ _AVAILABLE_ROOMS_ONE_RE = re.compile(r"חדר\s*פנוי|מתפנה\s*חדר")
 _BEDROOM_NUM_RE = re.compile(r"(\d+|" + "|".join(_HE_NUM_WORDS) + r")\s*חדרי\s*שינה")
 _BEDROOM_ONE_RE = re.compile(r"חדר\s*שינה(?!\w)")
 
+# "my room"/"החדר שלי" — the poster explicitly offering just their OWN
+# single room in a shared apartment (e.g. "Subletting my room ... 3 room
+# apartment ... one other roommate"). A strong, direct signal of
+# available_rooms=1 regardless of the apartment's total size (rooms, a
+# separate field) or how many other roommates already live there (they
+# are NOT additional availability). Checked before the bedroom-count
+# fallback below, since counting bedroom mentions in a post like this
+# would wrongly infer the apartment's total bedroom count (e.g. 3) as
+# what's available, rather than just the one room actually being offered.
+_MY_ROOM_RE = re.compile(r"\bmy\s+room\b(?!s)|החדר\s*שלי", re.IGNORECASE)
+
 
 def _extract_available_rooms(text: str) -> int | None:
     match = _AVAILABLE_ROOMS_NUM_RE.search(text)
@@ -101,6 +112,8 @@ def _extract_available_rooms(text: str) -> int | None:
         token = match.group(1)
         return int(token) if token.isdigit() else _HE_NUM_WORDS[token]
     if _AVAILABLE_ROOMS_ONE_RE.search(text):
+        return 1
+    if _MY_ROOM_RE.search(text):
         return 1
     match = _BEDROOM_NUM_RE.search(text)
     if match:
@@ -242,7 +255,25 @@ def _extract_phone(text: str) -> str | None:
 # non-address phrases that follow the same shape ("קומה 3", "3 דקות") are
 # excluded via a small stoplist to cut down on false positives.
 _ADDRESS_RE = re.compile(r"([א-ת]{2,}(?:\s[א-ת]{2,}){0,2})\s+(\d{1,3})\b")
-_ADDRESS_STOPWORDS = {"קומה", "חדרים", "חדר", "דקות", "דקה", "מטר", "מטרים", "שותפים", "שותף"}
+# "מעקב לפני 2 שעות" ("Follow · 2 hours ago") — Facebook's own post-header
+# UI text, captured as part of the post's raw_text — matches this regex's
+# shape (Hebrew word(s) + a number) just as well as a real street address,
+# and the "N hours/days ago" portion changes on every later scan, which
+# poisons content_hash_key's repost-matching (see store.py) into never
+# matching itself across scans and getting re-alerted every time.
+_ADDRESS_STOPWORDS = {
+    "קומה",
+    "חדרים",
+    "חדר",
+    "דקות",
+    "דקה",
+    "מטר",
+    "מטרים",
+    "שותפים",
+    "שותף",
+    "לפני",
+    "מעקב",
+}
 
 
 def _extract_address(text: str) -> str | None:

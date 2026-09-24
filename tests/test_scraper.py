@@ -29,6 +29,36 @@ def test_text_sig_ignores_whitespace_differences():
     assert a == b
 
 
+def test_normalize_post_url_strips_tracking_query_string():
+    url = (
+        "https://www.facebook.com/groups/SabletInTelAviv/posts/2296645864445200/"
+        "?__cft__[0]=AZgFNW-t18l-u0kSgOqieWwx1GCSm3XU2R9z4UT4q&__tn__=%2CO%2CP-R"
+    )
+    assert scraper._normalize_post_url(url) == (
+        "https://www.facebook.com/groups/SabletInTelAviv/posts/2296645864445200/"
+    )
+
+
+def test_normalize_post_url_same_post_different_tracking_params_match():
+    """Facebook regenerates __cft__/__tn__ on every render — the SAME
+    physical post seen on two different scans must normalize to the
+    identical post_url, or listing_seen() never recognizes the repeat and
+    re-alerts it every single scan."""
+    base = "https://www.facebook.com/groups/1/posts/999/"
+    first = scraper._normalize_post_url(base + "?__cft__[0]=abc&__tn__=%2CO")
+    second = scraper._normalize_post_url(base + "?__cft__[0]=xyz123&__tn__=%2CP-R")
+    assert first == second == base
+
+
+def test_normalize_post_url_leaves_a_clean_url_unchanged():
+    url = "https://fb.com/groups/1/posts/1"
+    assert scraper._normalize_post_url(url) == url
+
+
+def test_normalize_post_url_handles_empty_string():
+    assert scraper._normalize_post_url("") == ""
+
+
 def _make_page(url="https://facebook.com/groups/1", has_login_form=False):
     page = MagicMock()
     page.url = url
