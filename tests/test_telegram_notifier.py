@@ -303,5 +303,54 @@ def test_alert_keyboard_still_works_with_no_conn_and_unknown_price():
 def test_alert_keyboard_none_when_nothing_to_offer():
     from src.telegram_notifier import _alert_keyboard
 
-    listing = make_listing(price=3300, phone=None)
+    listing = make_listing(price=3300, phone=None, address=None)
     assert _alert_keyboard(None, listing) is None
+
+
+# --- Google Maps button: offered independently of price/phone ---
+
+
+def test_map_button_present_with_a_known_address():
+    from src.telegram_notifier import _map_button
+
+    listing = make_listing(address="דיזנגוף 120")
+    button = _map_button(listing)
+    assert button is not None
+    assert "google.com/maps" in button["url"]
+
+
+def test_map_button_present_with_coordinates_but_no_address():
+    from src.telegram_notifier import _map_button
+
+    listing = make_listing(address=None, lat=32.0768, lon=34.7742)
+    assert _map_button(listing) is not None
+
+
+def test_map_button_absent_without_address_or_coordinates():
+    from src.telegram_notifier import _map_button
+
+    listing = make_listing(address=None)
+    assert _map_button(listing) is None
+
+
+def test_alert_keyboard_includes_map_button_alongside_vote_buttons(isolated_db):
+    from src import store
+    from src.telegram_notifier import _alert_keyboard
+
+    listing = make_listing(price=3300, address="דיזנגוף 120")
+    with store.connect() as conn:
+        keyboard = _alert_keyboard(conn, listing)
+    assert keyboard is not None
+    flat_text = str(keyboard)
+    assert "save|" in flat_text
+    assert "google.com/maps" in flat_text
+
+
+def test_alert_keyboard_offers_map_button_even_when_price_is_known():
+    from src.telegram_notifier import _alert_keyboard
+
+    listing = make_listing(price=3300, phone=None, address="דיזנגוף 120")
+    keyboard = _alert_keyboard(None, listing)
+    assert keyboard is not None
+    assert "google.com/maps" in str(keyboard)
+    assert "wa.me" not in str(keyboard)

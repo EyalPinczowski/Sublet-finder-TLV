@@ -231,6 +231,12 @@ query param, so you just tap Send. This is a plain link button, not bot
 automation: Telegram bots have no API to send a WhatsApp message on your
 behalf, so nothing goes out until you tap Send yourself in WhatsApp.
 
+Any alert with a known address or coordinates also gets a **🗺️ Google
+Maps** button — the same link already shown as text in the message body,
+just as a tap target too. Offered independently of price/phone, so it
+shows up on every alert that has a location, not just "potential match"
+ones.
+
 ### Scan window & scheduling
 
 `config.yaml`'s `scan_window:` block controls how far back a scan looks:

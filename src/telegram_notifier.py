@@ -117,6 +117,18 @@ def _price_inquiry_button(listing: Listing) -> dict | None:
     return {"text": "\U0001F4AC Ask about price", "url": url}
 
 
+def _map_button(listing: Listing) -> dict | None:
+    """A URL button to the same Google Maps link already shown as text in
+    format_alert() — a tap target, not just a line to copy/paste. Uses
+    whatever map_url() can resolve from (address preferred, falling back
+    to raw coordinates), so it's offered independently of whether price
+    is known."""
+    link = map_url(listing.address, listing.lat, listing.lon)
+    if not link:
+        return None
+    return {"text": "\U0001F5FA️ Google Maps", "url": link}
+
+
 def _alert_keyboard(conn, listing: Listing) -> dict | None:
     rows = []
     if conn is not None:
@@ -133,6 +145,9 @@ def _alert_keyboard(conn, listing: Listing) -> dict | None:
     inquiry_button = _price_inquiry_button(listing)
     if inquiry_button:
         rows.append([inquiry_button])
+    map_button = _map_button(listing)
+    if map_button:
+        rows.append([map_button])
     return {"inline_keyboard": rows} if rows else None
 
 
