@@ -7,7 +7,17 @@ import os
 import secrets
 from pathlib import Path
 
-TOKEN_PATH = Path(__file__).resolve().parent.parent / "data" / "dashboard_token.txt"
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parent.parent
+# This module reads DASHBOARD_HOST/DASHBOARD_PORT/DASHBOARD_TOKEN directly
+# from the environment, so it needs .env loaded itself rather than relying
+# on some other module (e.g. src.config) having been imported first —
+# scripts/dashboard.py's import chain doesn't otherwise touch src.config,
+# so without this, .env's values were silently ignored.
+load_dotenv(ROOT / ".env")
+
+TOKEN_PATH = ROOT / "data" / "dashboard_token.txt"
 DEFAULT_PORT = 8765
 
 
