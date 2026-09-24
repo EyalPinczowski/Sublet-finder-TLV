@@ -340,6 +340,7 @@ python scripts/login_facebook_headless.py   # or login_facebook.py with a screen
 python scripts/scan.py                      # pulls posts and checks for matches
 python scripts/scan.py --dry-run            # classify and print, without writing/notifying
 python scripts/scan.py --explain            # sanity check: why isn't anything matching?
+python scripts/scan.py --posts-per-group 3  # a cheap, light test run — see below
 python scripts/matches.py                   # list everything matched so far, best score first
 ```
 
@@ -352,6 +353,17 @@ silently skipping it. Run it once if match counts look suspiciously low —
 either it'll turn up a real bug, or it'll confirm your `config.yaml` criteria
 (price range, neighborhoods, the lease-dates requirement) are just
 genuinely strict for what's actually being posted right now.
+
+**`--posts-per-group N`** overrides `config.yaml`'s `posts_per_group` for
+that one run only, without touching the real setting your twice-daily cron
+scans use. Useful for a quick manual test: a full scan across every
+configured group can extract (and LLM-classify) well over a hundred posts,
+which adds up fast against Gemini's free-tier daily quota — note that
+`--dry-run` does **not** save LLM calls (it only skips the DB write/
+notification at the very end, after extraction already happened).
+`--posts-per-group 3 --dry-run` gets you a real end-to-end pipeline check
+(scraping, extraction, matching, scoring) on a small sample, for a fraction
+of the cost of a full scan.
 
 Re-run the login script whenever the session expires (Facebook logs you out
 after a while of inactivity, or if it flags the login as suspicious). A scan

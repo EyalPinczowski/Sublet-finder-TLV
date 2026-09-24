@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scan configured Facebook groups for apartments matching your search.
 
-Usage: python scripts/scan.py [--headed] [--dry-run] [--explain]
+Usage: python scripts/scan.py [--headed] [--dry-run] [--explain] [--posts-per-group N]
 """
 import argparse
 
@@ -24,6 +24,16 @@ if __name__ == "__main__":
             "Sanity-check mode: for every extracted offer-listing that matches no "
             "search profile, print the specific reason(s) it was rejected. Implies "
             "--dry-run (never writes to the DB or notifies)."
+        ),
+    )
+    parser.add_argument(
+        "--posts-per-group",
+        type=int,
+        default=None,
+        help=(
+            "Override config.yaml's posts_per_group for this run only — e.g. "
+            "--posts-per-group 3 for a quick manual test that burns through far "
+            "fewer LLM calls than a full scan."
         ),
     )
     cmd_scan(parser.parse_args())

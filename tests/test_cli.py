@@ -41,10 +41,11 @@ def make_config(**overrides) -> Config:
 
 
 class _Args:
-    def __init__(self, headed=False, dry_run=False, explain=False):
+    def __init__(self, headed=False, dry_run=False, explain=False, posts_per_group=None):
         self.headed = headed
         self.dry_run = dry_run
         self.explain = explain
+        self.posts_per_group = posts_per_group
 
 
 # --- _compute_cutoff ---
@@ -262,6 +263,46 @@ def test_scan_passes_computed_cutoff_to_scrape_group(isolated_db, monkeypatch):
     monkeypatch.setattr(cli, "scrape_group", fake_scrape)
     cli._scan(make_config(), _Args())
     assert seen_cutoffs == [expected_cutoff]
+
+
+# --- _scan: --posts-per-group overrides config.posts_per_group for one run ---
+
+
+def test_scan_uses_configured_posts_per_group_by_default(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    seen_limits = []
+
+    def fake_scrape(context, group, limit, cutoff=None):
+        seen_limits.append(limit)
+        return [], True
+
+    monkeypatch.setattr(cli, "scrape_group", fake_scrape)
+    cli._scan(make_config(posts_per_group=10), _Args())
+    assert seen_limits == [10]
+
+
+def test_scan_posts_per_group_flag_overrides_config(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    seen_limits = []
+
+    def fake_scrape(context, group, limit, cutoff=None):
+        seen_limits.append(limit)
+        return [], True
+
+    monkeypatch.setattr(cli, "scrape_group", fake_scrape)
+    cli._scan(make_config(posts_per_group=10), _Args(posts_per_group=3))
+    assert seen_limits == [3]
+
+
+def test_scan_rejects_a_non_positive_posts_per_group_override(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    with pytest.raises(SystemExit) as exc_info:
+        cli._scan(make_config(), _Args(posts_per_group=0))
+    assert exc_info.value.code == 1
 
 
 def test_cmd_scan_exits_2_when_blocked(isolated_db, monkeypatch, tmp_path):

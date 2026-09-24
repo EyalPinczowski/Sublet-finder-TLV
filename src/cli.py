@@ -254,6 +254,15 @@ def _scan(config: Config, args) -> bool:
         # writes to the DB or notifies, same guarantee dry-run already
         # makes, so it always implies it rather than requiring both flags.
         args.dry_run = True
+    posts_per_group = getattr(args, "posts_per_group", None)
+    if posts_per_group is not None:
+        if posts_per_group <= 0:
+            console.print(
+                f"[red]--posts-per-group ({posts_per_group}) must be > 0[/]"
+            )
+            sys.exit(1)
+    else:
+        posts_per_group = config.posts_per_group
     cutoff = _compute_cutoff(config)
     groups = list(config.facebook_groups)
     random.shuffle(groups)  # don't scan in the same fixed order every run
@@ -268,7 +277,7 @@ def _scan(config: Config, args) -> bool:
             console.rule(f"Scanning {group.name}")
             try:
                 posts, saw_any_article = scrape_group(
-                    context, group, limit=config.posts_per_group, cutoff=cutoff
+                    context, group, limit=posts_per_group, cutoff=cutoff
                 )
             except ScraperBlocked as exc:
                 console.print(f"[red]Blocked by Facebook:[/] {exc}")
@@ -503,6 +512,18 @@ def main() -> None:
             "Sanity-check mode: for every extracted offer-listing that matches no "
             "search profile, print the specific reason(s) it was rejected. Implies "
             "--dry-run (never writes to the DB or notifies)."
+        ),
+    )
+    scan_parser.add_argument(
+        "--posts-per-group",
+        type=int,
+        default=None,
+        help=(
+            "Override config.yaml's posts_per_group for this run only — e.g. "
+            "--posts-per-group 3 for a quick manual test that burns through far "
+            "fewer LLM calls than a full scan. Combine with --dry-run for a test "
+            "that also skips DB writes/notifications entirely. Leaving this unset "
+            "uses config.yaml's value, same as before."
         ),
     )
     scan_parser.set_defaults(func=cmd_scan)
