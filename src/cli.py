@@ -23,7 +23,12 @@ from . import (
 from .browser import login_and_save_session, open_scan_session
 from .config import Config, load_config
 from .listing_models import Listing
-from .listing_parser import is_offer_listing, looks_like_explicit_apartment_seeker, parse_listing
+from .listing_parser import (
+    is_offer_listing,
+    looks_like_explicit_apartment_seeker,
+    mentions_housing,
+    parse_listing,
+)
 from .scraper import (
     RawPost,
     ScanAlreadyRunning,
@@ -61,6 +66,12 @@ def _extract_listing(post: RawPost, group_name: str, config: Config) -> Listing 
             # looks_like_explicit_apartment_seeker's docstring for why
             # it's safe to skip the LLM here specifically (it never
             # matches ambiguous phrasing like "looking for a roommate").
+            return None
+        if not mentions_housing(post.text):
+            # No housing/rental vocabulary at all — near-certainly not an
+            # offer, not worth a paced/budgeted Gemini call. Broader net
+            # than is_offer_listing() on purpose — see mentions_housing's
+            # docstring for why the stricter check can't be reused here.
             return None
         try:
             return llm_extractor.extract(

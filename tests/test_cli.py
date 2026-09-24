@@ -418,6 +418,15 @@ def test_extract_listing_skips_llm_call_for_explicit_seeker_post(monkeypatch):
     assert calls == []  # never reached the paced/budgeted Gemini call
 
 
+def test_extract_listing_skips_llm_call_for_unrelated_post(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.llm_extractor, "extract", lambda *a, **k: calls.append(1))
+    post = RawPost(post_url="https://fb.com/1", author="a", text="מי ראה את המשחק אתמול? מטורף!")
+    result = cli._extract_listing(post, "g1", make_config(llm=_llm_config()))
+    assert result is None
+    assert calls == []  # no housing-related vocabulary at all — never called the LLM
+
+
 def test_extract_listing_still_calls_llm_for_roommate_wanted_post(monkeypatch):
     """"מחפש שותף" ("looking for a roommate") must still go through the LLM
     — it's ambiguous (often an offer), unlike an explicit "looking for an

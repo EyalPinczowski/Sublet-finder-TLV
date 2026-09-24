@@ -10,6 +10,7 @@ from src.listing_parser import (
     _parse_date_token,
     is_offer_listing,
     looks_like_explicit_apartment_seeker,
+    mentions_housing,
     parse_listing,
 )
 
@@ -54,6 +55,23 @@ def test_looks_like_explicit_apartment_seeker_ignores_roommate_wanted_posts():
 def test_looks_like_explicit_apartment_seeker_false_for_offer_post():
     text = "סאבלט בפלורנטין, 2 חדרים, 4500 ₪ לחודש"
     assert looks_like_explicit_apartment_seeker(text) is False
+
+
+def test_mentions_housing_detects_sublet_keyword():
+    assert mentions_housing("סאבלט בפלורנטין, 4500 ₪") is True
+    assert mentions_housing("subletting my room downtown") is True
+
+
+def test_mentions_housing_detects_apartment_room_and_roommate_words():
+    assert mentions_housing("דירה יפה באזור המרכז") is True
+    assert mentions_housing("חדר פנוי בדירת שותפים") is True
+    assert mentions_housing("looking for a roommate for my apartment") is True
+    assert mentions_housing("מחפש שותף לדירה שלי בפלורנטין") is True
+
+
+def test_mentions_housing_false_for_unrelated_post():
+    assert mentions_housing("מי ראה את המשחק אתמול? מטורף!") is False
+    assert mentions_housing("selling a couch, barely used") is False
 
 
 def test_parse_listing_extracts_price_rooms_and_neighborhood():

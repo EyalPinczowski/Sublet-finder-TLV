@@ -24,6 +24,29 @@ SEEKER_KEYWORDS = [
     "searching for",
 ]
 
+# A much broader net than OFFER_KEYWORDS/SEEKER_KEYWORDS — anything that
+# mentions housing/rental/roommates at all, not just an explicit offer or
+# seeker phrasing. Used only to skip the LLM call outright for posts with
+# NONE of these words (an unrelated group announcement, someone selling
+# furniture, event chatter) — never to reject an ambiguous case like
+# "מחפש שותף לדירה שלי" ("looking for a roommate for my apartment", often
+# actually an offer), which always contains "דירה"/"שותף" and so still
+# passes this check. See looks_like_explicit_apartment_seeker below for
+# the separate, narrower "definitely not an offer" skip.
+_HOUSING_RELATED_RE = re.compile(
+    r"סאבלט|סבלט|שכירות|שכר\s*דירה|דירה|דירות|חדר|חדרים|שותף|שותפה|שותפים|שותפות"
+    r"|sublet|subletting|rent(?:al)?|apartment|flat(?:mate)?|room(?:mate)?s?|lease",
+    re.IGNORECASE,
+)
+
+
+def mentions_housing(text: str) -> bool:
+    """False only when a post has NO housing-related vocabulary at all —
+    see _HOUSING_RELATED_RE. Used to skip the LLM call entirely for a
+    post that's near-certainly unrelated to apartments/rentals, before
+    spending a paced/budgeted Gemini call on it."""
+    return bool(_HOUSING_RELATED_RE.search(text or ""))
+
 # Comma/period-grouped thousands (e.g. "4,500") or a plain digit run (e.g.
 # "3000"); the lookaround guards stop either alternative from matching a
 # partial substring of a longer number. Reused across all three
