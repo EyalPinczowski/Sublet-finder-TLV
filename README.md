@@ -239,6 +239,15 @@ just as a tap target too. Offered independently of price/phone, so it
 shows up on every alert that has a location, not just "potential match"
 ones.
 
+Two more buttons are config-driven rather than per-listing, so they
+appear on every alert once set up: **📊 Dashboard** links to the
+[local dashboard](#dashboard)'s listing list (only once `DASHBOARD_HOST`
+is set — see below, since a `127.0.0.1` link wouldn't load on your
+phone), and **📄 Sheets** links to the [Google Sheet](#google-sheets)
+itself (once `GOOGLE_SHEET_ID` is set). Neither points at that specific
+listing's row — the dashboard has no per-listing URL, and a Sheets row
+moves every time the sheet re-sorts by score.
+
 ### Scan window & scheduling
 
 `config.yaml`'s `scan_window:` block controls how far back a scan looks:
@@ -379,8 +388,18 @@ python scripts/dashboard.py [--port 8765]
 A local page (stdlib-only, no extra dependency) that reads `data/listings.db`
 live and lists matches best-first, with the same Save/Dismiss actions. Every
 route requires `?token=<DASHBOARD_TOKEN>` — there is no unauthenticated mode,
-since listings carry addresses and phone numbers. Binds to `127.0.0.1` only:
-**LAN/local-only by design, never expose this port to the internet.**
+since listings carry addresses and phone numbers. Binds to `127.0.0.1` by
+default: **LAN/local-only, never expose this port to the internet.**
+
+Set `DASHBOARD_HOST` (e.g. to your tablet's own LAN IP, `192.168.1.23`) to
+make it reachable from your phone over WiFi, and to make the **📊
+Dashboard** button in Telegram alerts actually work — while it's still
+`127.0.0.1`, that button is simply omitted, since a `127.0.0.1` link
+would only load when opened on the exact device running the dashboard
+(your phone's `127.0.0.1` is the phone itself, not your tablet).
+**Never** set it to `0.0.0.0` or a public address — the token is the
+*only* auth, and this still isn't meant to leave your home network.
+`DASHBOARD_PORT` overrides the default port (`8765`) the same way.
 
 Above the list, a map (Leaflet + OpenStreetMap — free, no API key) plots
 every currently-valid match that has a known location: green markers for

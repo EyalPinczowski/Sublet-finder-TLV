@@ -70,6 +70,17 @@ def _maps_cell(listing: Listing) -> str:
     return _hyperlink_cell(map_url(listing.address, listing.lat, listing.lon), "Google Maps")
 
 
+def sheet_url() -> str | None:
+    """A link to the Sheet itself — not a specific row, since Sheets has
+    no stable per-row deep link once rows get re-sorted by score (see
+    _resort()) — for a "open the sheet" button/link elsewhere (a
+    Telegram button). None when GOOGLE_SHEET_ID isn't set."""
+    sheet_id = os.environ.get("GOOGLE_SHEET_ID")
+    if not sheet_id:
+        return None
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+
+
 _sheet = None
 _checked = False
 # Loaded once per process (inside _get_sheet(), gated by _checked) rather

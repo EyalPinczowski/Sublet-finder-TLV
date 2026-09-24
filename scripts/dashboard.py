@@ -6,8 +6,10 @@ sorted by effective score (fit score + vote nudges), with the same
 Every route requires DASHBOARD_TOKEN in the query string (auto-generated
 into data/dashboard_token.txt on first run if you don't set one) — there is
 no unauthenticated mode, since listings carry addresses and phone numbers.
-Binds to 127.0.0.1 only: LAN/local-only by design, never expose this port
-to the internet. For access away from your network, see scripts/publish.py.
+Binds to 127.0.0.1 by default: LAN/local-only, never expose this port to
+the internet. Set DASHBOARD_HOST to your tablet's LAN IP to make it (and
+the "Dashboard" links in Telegram/Sheets) reachable from your phone over
+WiFi. For access away from your network, see scripts/publish.py.
 
 Usage: python scripts/dashboard.py [--port 8765]
 """
@@ -16,32 +18,16 @@ from __future__ import annotations
 import argparse
 import html
 import json
-import os
-import secrets
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import _bootstrap  # noqa: F401
 
 from src import store
 from src.contact import PRICE_INQUIRY_MESSAGE, whatsapp_link
+from src.dashboard_config import get_host, get_port
+from src.dashboard_config import get_token as _get_token
 from src.geocode import map_url as build_map_url
-
-TOKEN_PATH = Path(__file__).resolve().parent.parent / "data" / "dashboard_token.txt"
-
-
-def _get_token() -> str:
-    token = os.environ.get("DASHBOARD_TOKEN")
-    if token:
-        return token
-    if TOKEN_PATH.exists():
-        return TOKEN_PATH.read_text().strip()
-    token = secrets.token_urlsafe(16)
-    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(token)
-    print(f"Generated a dashboard token and saved it to {TOKEN_PATH}")
-    return token
 
 
 def _is_small(available_rooms: int | None) -> bool:
@@ -319,13 +305,20 @@ def make_handler(token: str):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=get_port())
     args = parser.parse_args()
 
+    host = get_host()
     token = _get_token()
-    server = HTTPServer(("127.0.0.1", args.port), make_handler(token))
-    print(f"Dashboard: http://127.0.0.1:{args.port}/?token={token}")
-    print("LAN/local-only by design — do not expose this port to the internet.")
+    server = HTTPServer((host, args.port), make_handler(token))
+    print(f"Dashboard: http://{host}:{args.port}/?token={token}")
+    if host == "127.0.0.1":
+        print("LAN/local-only by design — do not expose this port to the internet.")
+    else:
+        print(
+            f"Bound to {host} (DASHBOARD_HOST) — reachable from your LAN. "
+            "Never set this to a public/internet-facing address."
+        )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

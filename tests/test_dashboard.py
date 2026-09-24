@@ -6,7 +6,7 @@ from http.server import HTTPServer
 
 import dashboard
 
-from src import store
+from src import dashboard_config, store
 from src.listing_models import Listing
 
 
@@ -275,17 +275,17 @@ def test_render_page_escapes_script_breakout_in_marker_json(isolated_db):
 
 
 def test_get_token_uses_env_var(monkeypatch, tmp_path):
-    monkeypatch.setattr(dashboard, "TOKEN_PATH", tmp_path / "dashboard_token.txt")
+    monkeypatch.setattr(dashboard_config, "TOKEN_PATH", tmp_path / "dashboard_token.txt")
     monkeypatch.setenv("DASHBOARD_TOKEN", "explicit-token")
     assert dashboard._get_token() == "explicit-token"
 
 
 def test_get_token_generates_and_persists_when_unset(monkeypatch, tmp_path):
-    monkeypatch.setattr(dashboard, "TOKEN_PATH", tmp_path / "dashboard_token.txt")
+    monkeypatch.setattr(dashboard_config, "TOKEN_PATH", tmp_path / "dashboard_token.txt")
     monkeypatch.delenv("DASHBOARD_TOKEN", raising=False)
     token = dashboard._get_token()
     assert token
-    assert dashboard.TOKEN_PATH.read_text().strip() == token
+    assert dashboard_config.TOKEN_PATH.read_text().strip() == token
     # A second call reuses the persisted token.
     assert dashboard._get_token() == token
 

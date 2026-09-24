@@ -375,3 +375,13 @@ def test_save_listing_writes_lease_start_and_stay_days(monkeypatch, tmp_path):
     row = ws.append_row.call_args.args[0]
     assert row[sheets.HEADER.index("lease_start")] == "2026-11-01"
     assert row[sheets.HEADER.index("stay_days")] == 14
+
+
+def test_sheet_url_none_without_sheet_id(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SHEET_ID", raising=False)
+    assert sheets.sheet_url() is None
+
+
+def test_sheet_url_built_from_sheet_id(monkeypatch):
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "abc123")
+    assert sheets.sheet_url() == "https://docs.google.com/spreadsheets/d/abc123/edit"

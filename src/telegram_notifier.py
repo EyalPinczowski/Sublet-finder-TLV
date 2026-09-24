@@ -7,9 +7,11 @@ import requests
 from . import store
 from .config import SearchConfig
 from .contact import PRICE_INQUIRY_MESSAGE, whatsapp_link
+from .dashboard_config import dashboard_url
 from .geocode import map_url
 from .listing_models import Listing
 from .scoring import stars
+from .sheets import sheet_url
 
 EXCERPT_LIMIT = 300
 
@@ -119,6 +121,28 @@ def _map_button(listing: Listing) -> dict | None:
     return {"text": "\U0001F5FA️ Google Maps", "url": link}
 
 
+def _dashboard_button() -> dict | None:
+    """A URL button to the local dashboard's listing list (not this
+    specific listing — the dashboard has no per-row deep link). Omitted
+    entirely while DASHBOARD_HOST is still the default 127.0.0.1, since
+    a link there would only load when tapped from the same device
+    running the dashboard — see dashboard_config.dashboard_url()."""
+    url = dashboard_url()
+    if not url:
+        return None
+    return {"text": "\U0001F4CA Dashboard", "url": url}
+
+
+def _sheets_button() -> dict | None:
+    """A URL button to the Google Sheet itself (not this specific row —
+    Sheets has no stable per-row deep link once rows get re-sorted by
+    score). Omitted when GOOGLE_SHEET_ID isn't set."""
+    url = sheet_url()
+    if not url:
+        return None
+    return {"text": "\U0001F4C4 Sheets", "url": url}
+
+
 def _alert_keyboard(conn, listing: Listing) -> dict | None:
     rows = []
     if conn is not None:
@@ -138,6 +162,12 @@ def _alert_keyboard(conn, listing: Listing) -> dict | None:
     map_button = _map_button(listing)
     if map_button:
         rows.append([map_button])
+    dashboard_button = _dashboard_button()
+    if dashboard_button:
+        rows.append([dashboard_button])
+    sheets_button = _sheets_button()
+    if sheets_button:
+        rows.append([sheets_button])
     return {"inline_keyboard": rows} if rows else None
 
 

@@ -306,9 +306,14 @@ def test_alert_keyboard_still_works_with_no_conn_and_unknown_price():
     assert "save|" not in str(keyboard)
 
 
-def test_alert_keyboard_none_when_nothing_to_offer():
+def test_alert_keyboard_none_when_nothing_to_offer(monkeypatch):
     from src.telegram_notifier import _alert_keyboard
 
+    # Isolate from whatever's actually set in this checkout's real .env —
+    # a configured GOOGLE_SHEET_ID/DASHBOARD_HOST would otherwise still
+    # offer a Sheets/Dashboard button even with nothing else to show.
+    monkeypatch.delenv("GOOGLE_SHEET_ID", raising=False)
+    monkeypatch.delenv("DASHBOARD_HOST", raising=False)
     listing = make_listing(price=3300, phone=None, address=None)
     assert _alert_keyboard(None, listing) is None
 
@@ -360,3 +365,57 @@ def test_alert_keyboard_offers_map_button_even_when_price_is_known():
     assert keyboard is not None
     assert "google.com/maps" in str(keyboard)
     assert "wa.me" not in str(keyboard)
+
+
+# --- Dashboard/Sheets buttons: config-driven, not per-listing ---
+
+
+def test_dashboard_button_absent_while_still_localhost(monkeypatch):
+    from src.telegram_notifier import _dashboard_button
+
+    monkeypatch.delenv("DASHBOARD_HOST", raising=False)
+    assert _dashboard_button() is None
+
+
+def test_dashboard_button_present_once_host_is_set(monkeypatch, tmp_path):
+    from src import dashboard_config
+    from src.telegram_notifier import _dashboard_button
+
+    monkeypatch.setattr(dashboard_config, "TOKEN_PATH", tmp_path / "dashboard_token.txt")
+    monkeypatch.setenv("DASHBOARD_HOST", "192.168.1.23")
+    monkeypatch.setenv("DASHBOARD_TOKEN", "tok")
+    button = _dashboard_button()
+    assert button is not None
+    assert button["url"] == "http://192.168.1.23:8765/?token=tok"
+
+
+def test_sheets_button_absent_without_sheet_id(monkeypatch):
+    from src.telegram_notifier import _sheets_button
+
+    monkeypatch.delenv("GOOGLE_SHEET_ID", raising=False)
+    assert _sheets_button() is None
+
+
+def test_sheets_button_present_with_sheet_id(monkeypatch):
+    from src.telegram_notifier import _sheets_button
+
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "abc123")
+    button = _sheets_button()
+    assert button is not None
+    assert button["url"] == "https://docs.google.com/spreadsheets/d/abc123/edit"
+
+
+def test_alert_keyboard_includes_dashboard_and_sheets_buttons(monkeypatch, tmp_path):
+    from src import dashboard_config
+    from src.telegram_notifier import _alert_keyboard
+
+    monkeypatch.setattr(dashboard_config, "TOKEN_PATH", tmp_path / "dashboard_token.txt")
+    monkeypatch.setenv("DASHBOARD_HOST", "192.168.1.23")
+    monkeypatch.setenv("DASHBOARD_TOKEN", "tok")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "abc123")
+    listing = make_listing(price=3300, phone=None, address=None)
+    keyboard = _alert_keyboard(None, listing)
+    assert keyboard is not None
+    flat_text = str(keyboard)
+    assert "192.168.1.23:8765" in flat_text
+    assert "docs.google.com/spreadsheets" in flat_text
