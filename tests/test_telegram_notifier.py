@@ -254,27 +254,33 @@ def test_send_listing_includes_vote_buttons_when_conn_given(isolated_db):
 # --- price inquiry button: only when price is unknown and a phone was extracted ---
 
 
-def test_price_inquiry_button_present_when_price_unknown():
-    from src.telegram_notifier import _price_inquiry_button
+def test_whatsapp_button_asks_about_price_when_price_unknown():
+    from src.telegram_notifier import _whatsapp_button
 
     listing = make_listing(price=None, phone="050-1234567")
-    button = _price_inquiry_button(listing)
+    button = _whatsapp_button(listing)
     assert button is not None
+    assert button["text"] == "\U0001F4AC Ask about price"
     assert button["url"].startswith("https://wa.me/972501234567?text=")
 
 
-def test_price_inquiry_button_absent_when_price_known():
-    from src.telegram_notifier import _price_inquiry_button
+def test_whatsapp_button_is_a_plain_contact_link_when_price_known():
+    from src.telegram_notifier import _whatsapp_button
 
     listing = make_listing(price=3300, phone="050-1234567")
-    assert _price_inquiry_button(listing) is None
+    button = _whatsapp_button(listing)
+    assert button is not None
+    assert button["text"] == "\U0001F4AC Contact via WhatsApp"
+    assert button["url"] == "https://wa.me/972501234567"
 
 
-def test_price_inquiry_button_absent_without_a_phone():
-    from src.telegram_notifier import _price_inquiry_button
+def test_whatsapp_button_absent_without_a_phone():
+    from src.telegram_notifier import _whatsapp_button
 
     listing = make_listing(price=None, phone=None)
-    assert _price_inquiry_button(listing) is None
+    assert _whatsapp_button(listing) is None
+    listing2 = make_listing(price=3300, phone=None)
+    assert _whatsapp_button(listing2) is None
 
 
 def test_alert_keyboard_includes_inquiry_button_alongside_vote_buttons(isolated_db):

@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .contact import PRICE_INQUIRY_MESSAGE, whatsapp_link
+from .geocode import map_url
 from .listing_models import Listing
 
 SERVICE_ACCOUNT_PATH = (
@@ -17,7 +19,7 @@ SERVICE_ACCOUNT_PATH = (
 )
 HEADER = [
     "post_url", "group", "price", "potential", "rooms", "roommates", "toilets",
-    "suitable_for", "address", "phone", "lease_start", "stay_days",
+    "suitable_for", "address", "phone", "whatsapp", "maps", "lease_start", "stay_days",
     "distance_m", "score", "summary",
 ]
 SCORE_COLUMN = HEADER.index("score") + 1  # 1-based, for Worksheet.sort()
@@ -39,6 +41,33 @@ def _potential_cell(price: int | None) -> str:
     # Price is a soft filter — a listing with no stated price still shows
     # up here, but was never actually confirmed to be in budget.
     return "yes" if price is None else ""
+
+
+def _hyperlink_cell(url: str | None, label: str) -> str:
+    """A =HYPERLINK() formula cell — only actually evaluated as a formula
+    (rather than inserted as literal "=HYPERLINK(...)" text) because
+    save_listing()'s append_row() call passes value_input_option=
+    "USER_ENTERED". Doubling an embedded quote is Sheets' own escaping
+    rule for a quoted formula argument."""
+    if not url:
+        return ""
+    escaped_url = url.replace('"', '""')
+    escaped_label = label.replace('"', '""')
+    return f'=HYPERLINK("{escaped_url}", "{escaped_label}")'
+
+
+def _whatsapp_cell(listing: Listing) -> str:
+    # Pre-filled price inquiry when the price is still unknown (a
+    # "potential match" is unverified precisely because of that), a
+    # plain "open the chat" link otherwise — same rule as the Telegram
+    # alert's WhatsApp button and the dashboard card's link.
+    message = PRICE_INQUIRY_MESSAGE if listing.price is None else None
+    label = "Ask about price" if listing.price is None else "Contact via WhatsApp"
+    return _hyperlink_cell(whatsapp_link(listing.phone, message=message), label)
+
+
+def _maps_cell(listing: Listing) -> str:
+    return _hyperlink_cell(map_url(listing.address, listing.lat, listing.lon), "Google Maps")
 
 
 _sheet = None
@@ -114,12 +143,18 @@ def save_listing(listing: Listing) -> None:
                 _suitable_for(listing.available_rooms),
                 listing.address,
                 listing.phone,
+                _whatsapp_cell(listing),
+                _maps_cell(listing),
                 listing.lease_start_date.isoformat() if listing.lease_start_date else "",
                 listing.lease_duration_days,
                 listing.distance_m,
                 listing.score,
                 listing.summary,
-            ]
+            ],
+            # Without this, "=HYPERLINK(...)" cells would be inserted as
+            # literal text (Sheets' RAW mode, gspread's own default) rather
+            # than evaluated as an actual clickable formula.
+            value_input_option="USER_ENTERED",
         )
         _existing_urls.add(listing.post_url)
         _dirty = True

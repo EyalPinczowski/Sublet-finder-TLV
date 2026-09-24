@@ -166,7 +166,7 @@ def test_render_page_includes_google_maps_link_for_known_address(isolated_db):
 
 
 def test_render_page_outbound_card_links_never_leak_the_token_via_referer(isolated_db):
-    """Every outbound card link (post + Google Maps) must carry
+    """Every outbound card link (post + Google Maps + WhatsApp) must carry
     rel="noreferrer" — the page's own URL carries ?token=<DASHBOARD_TOKEN>,
     the dashboard's only auth mechanism, and a browser sends the current
     page URL as Referer by default."""
@@ -177,6 +177,7 @@ def test_render_page_outbound_card_links_never_leak_the_token_via_referer(isolat
             raw_text="raw text",
             price=3300,
             address="דיזנגוף 120",
+            phone="050-1234567",
             score=80,
         )
         store.insert_listing(conn, listing, matched_profiles=["default"])
@@ -184,7 +185,8 @@ def test_render_page_outbound_card_links_never_leak_the_token_via_referer(isolat
     outbound_hrefs = [
         line
         for line in page.splitlines()
-        if 'target="_blank"' in line and ("facebook.com" in line or "google.com/maps" in line)
+        if 'target="_blank"' in line
+        and ("facebook.com" in line or "google.com/maps" in line or "wa.me" in line)
     ]
     assert outbound_hrefs  # sanity: the page actually has outbound links to check
     assert all('rel="noreferrer"' in line for line in outbound_hrefs)
@@ -211,6 +213,47 @@ def test_render_page_omits_google_maps_link_without_address_or_coordinates(isola
         store.insert_listing(conn, listing, matched_profiles=["default"])
         page = dashboard.render_page(conn, "tok")
     assert "Google Maps" not in page
+
+
+def test_render_page_contact_via_whatsapp_when_price_known(isolated_db):
+    with store.connect() as conn:
+        _seed(conn)  # price=3300, phone="050-1234567"
+        page = dashboard.render_page(conn, "tok")
+    assert "Contact via WhatsApp" in page
+    assert "Ask about price" not in page
+    assert "wa.me/972501234567" in page
+
+
+def test_render_page_asks_about_price_when_price_unknown(isolated_db):
+    with store.connect() as conn:
+        listing = Listing(
+            post_url="https://facebook.com/groups/1/posts/7",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=None,
+            phone="050-1234567",
+            score=80,
+        )
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    assert "Ask about price" in page
+    assert "Contact via WhatsApp" not in page
+    assert "wa.me/972501234567?text=" in page
+
+
+def test_render_page_omits_whatsapp_link_without_a_phone(isolated_db):
+    with store.connect() as conn:
+        listing = Listing(
+            post_url="https://facebook.com/groups/1/posts/8",
+            group_name="Secret Tel Aviv",
+            raw_text="raw text",
+            price=3300,
+            phone=None,
+            score=80,
+        )
+        store.insert_listing(conn, listing, matched_profiles=["default"])
+        page = dashboard.render_page(conn, "tok")
+    assert "wa.me" not in page
 
 
 def test_render_page_escapes_script_breakout_in_marker_json(isolated_db):

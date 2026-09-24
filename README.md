@@ -224,12 +224,14 @@ dashboard card, and published snapshot each show a small "potential"
 badge next to the price — a visual cue to double-check that one by hand
 before the rest.
 
-A "potential match" alert with a phone number also gets a **💬 Ask about
-price** button, alongside Save/Dismiss — it opens WhatsApp with a
-pre-filled "what's the monthly price?" message via `wa.me`'s own `text`
-query param, so you just tap Send. This is a plain link button, not bot
-automation: Telegram bots have no API to send a WhatsApp message on your
-behalf, so nothing goes out until you tap Send yourself in WhatsApp.
+Any alert with a phone number also gets a **💬 WhatsApp** button, alongside
+Save/Dismiss — "Ask about price" with a pre-filled inquiry message when the
+price is still unknown (a "potential match" alert), or a plain "Contact via
+WhatsApp" link with nothing pre-filled when the price is already known.
+Either way it opens WhatsApp via `wa.me`'s own `text` query param, so you
+just tap Send. This is a plain link button, not bot automation: Telegram
+bots have no API to send a WhatsApp message on your behalf, so nothing
+goes out until you tap Send yourself in WhatsApp.
 
 Any alert with a known address or coordinates also gets a **🗺️ Google
 Maps** button — the same link already shown as text in the message body,
@@ -389,6 +391,12 @@ coordinates) and to the **original Facebook post**. A listing without a
 geocoded address just doesn't get a marker — it still shows up in the card
 list below.
 
+Each card with a phone number also gets a **WhatsApp** link — "Ask about
+price" with a pre-filled inquiry message when the price is unknown, or a
+plain "Contact via WhatsApp" link when it's already known — same rule and
+same shared `wa.me` link-building (`src/contact.py`) as the Telegram
+alert's button.
+
 ### Publishing a snapshot
 
 ```bash
@@ -416,6 +424,12 @@ column ("1 person" / "2 people" / …) derived from the post's
 `available_rooms`, plus `lease_start`/`stay_days` columns, so you can sort
 and filter by move-in date and stay length right there too. A missing
 price shows as the text "not listed" rather than a blank cell.
+
+`whatsapp` and `maps` columns are clickable `=HYPERLINK(...)` cells (the
+label reads "Ask about price"/"Contact via WhatsApp" for the WhatsApp one,
+same rule as the dashboard/Telegram links), built with the same shared
+helpers (`src/contact.py`, `src/geocode.py`) as everywhere else — blank
+when there's no phone/address to link from.
 
 1. In **Google Cloud Console**: create a project → enable the **Google
    Sheets API** → create a **service account** → download its JSON key.

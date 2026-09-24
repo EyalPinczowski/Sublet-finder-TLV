@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import re
 import time
-from urllib.parse import quote
 
 import requests
 
 from . import store
 from .config import SearchConfig
+from .contact import PRICE_INQUIRY_MESSAGE, whatsapp_link
 from .geocode import map_url
 from .listing_models import Listing
 from .scoring import stars
@@ -19,17 +18,6 @@ EXCERPT_LIMIT = 300
 # _post() call paying a fresh handshake — a scan can send several calls
 # per matched listing (photo/album + a follow-up keyboard message).
 _session = requests.Session()
-
-
-def _contact_link(phone: str | None) -> str | None:
-    """A tappable WhatsApp link for a normalized Israeli mobile
-    ("05X-XXXXXXX"), else None."""
-    if not phone:
-        return None
-    digits = re.sub(r"\D", "", phone)
-    if len(digits) == 10 and digits.startswith("05"):
-        return "https://wa.me/972" + digits[1:]
-    return None
 
 
 def format_alert(listing: Listing, profile: SearchConfig, score: int) -> str:
@@ -90,31 +78,33 @@ def format_alert(listing: Listing, profile: SearchConfig, score: int) -> str:
     if map_link:
         lines.append(f"\U0001F5FA️ {map_link}")
 
-    wa = _contact_link(listing.phone)
+    wa = whatsapp_link(listing.phone)
     if wa:
         lines.append(f"\U0001F4AC {wa}")
 
     return "\n".join(lines)
 
 
-_PRICE_INQUIRY_MESSAGE = "היי! ראיתי את הפוסט שלך על הדירה בפייסבוק - מה המחיר החודשי?"
-
-
-def _price_inquiry_button(listing: Listing) -> dict | None:
-    """A URL button opening WhatsApp with a pre-filled price inquiry — a
-    "potential match" (see format_alert's header) is unverified precisely
-    because the price is unknown, so this is the one-tap way to actually
-    find out. Only offered when there's a real WhatsApp-capable phone
-    number extracted from the post; wa.me's own `text` query param does
-    the pre-filling, no bot-side message-sending involved (Telegram bots
-    have no API to send WhatsApp messages on your behalf, and this
-    project doesn't automate WhatsApp any more than it automates writing
-    to Facebook — you still tap Send yourself)."""
-    wa = _contact_link(listing.phone)
-    if listing.price is not None or not wa:
+def _whatsapp_button(listing: Listing) -> dict | None:
+    """A URL button opening WhatsApp — pre-filled with a price inquiry
+    when the price is still unknown (a "potential match", see
+    format_alert's header, is unverified precisely because of that), or
+    a plain "just open the chat" link otherwise. Only offered when
+    there's a real WhatsApp-capable phone number extracted from the
+    post; wa.me's own `text` query param does the pre-filling, no
+    bot-side message-sending involved (Telegram bots have no API to send
+    WhatsApp messages on your behalf, and this project doesn't automate
+    WhatsApp any more than it automates writing to Facebook — you still
+    tap Send yourself)."""
+    if listing.price is None:
+        url = whatsapp_link(listing.phone, message=PRICE_INQUIRY_MESSAGE)
+        if not url:
+            return None
+        return {"text": "\U0001F4AC Ask about price", "url": url}
+    url = whatsapp_link(listing.phone)
+    if not url:
         return None
-    url = f"{wa}?text={quote(_PRICE_INQUIRY_MESSAGE)}"
-    return {"text": "\U0001F4AC Ask about price", "url": url}
+    return {"text": "\U0001F4AC Contact via WhatsApp", "url": url}
 
 
 def _map_button(listing: Listing) -> dict | None:
@@ -142,9 +132,9 @@ def _alert_keyboard(conn, listing: Listing) -> dict | None:
             )
         except Exception:
             pass
-    inquiry_button = _price_inquiry_button(listing)
-    if inquiry_button:
-        rows.append([inquiry_button])
+    whatsapp_button = _whatsapp_button(listing)
+    if whatsapp_button:
+        rows.append([whatsapp_button])
     map_button = _map_button(listing)
     if map_button:
         rows.append([map_button])

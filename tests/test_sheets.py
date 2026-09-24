@@ -217,6 +217,82 @@ def test_save_listing_writes_suitable_for_column(monkeypatch, tmp_path):
     assert row[sheets.HEADER.index("suitable_for")] == "2 people"
 
 
+# --- whatsapp/maps hyperlink columns ---
+
+
+def test_hyperlink_cell_escapes_embedded_quotes():
+    cell = sheets._hyperlink_cell('https://example.com/?q="hi"', 'a "label"')
+    assert cell == '=HYPERLINK("https://example.com/?q=""hi""", "a ""label""")'
+
+
+def test_hyperlink_cell_blank_without_a_url():
+    assert sheets._hyperlink_cell(None, "label") == ""
+
+
+def test_whatsapp_cell_asks_about_price_when_price_unknown():
+    listing = make_listing(price=None, phone="050-1234567")
+    cell = sheets._whatsapp_cell(listing)
+    assert cell.startswith('=HYPERLINK("https://wa.me/972501234567?text=')
+    assert "Ask about price" in cell
+
+
+def test_whatsapp_cell_plain_contact_when_price_known():
+    listing = make_listing(price=3300, phone="050-1234567")
+    cell = sheets._whatsapp_cell(listing)
+    assert cell == '=HYPERLINK("https://wa.me/972501234567", "Contact via WhatsApp")'
+
+
+def test_whatsapp_cell_blank_without_a_phone():
+    listing = make_listing(phone=None)
+    assert sheets._whatsapp_cell(listing) == ""
+
+
+def test_maps_cell_uses_the_address():
+    listing = make_listing(address="דיזנגוף 120")
+    cell = sheets._maps_cell(listing)
+    assert cell.startswith('=HYPERLINK("https://www.google.com/maps')
+    assert "Google Maps" in cell
+
+
+def test_maps_cell_blank_without_address_or_coordinates():
+    listing = make_listing(address=None)
+    assert sheets._maps_cell(listing) == ""
+
+
+def test_save_listing_writes_whatsapp_and_maps_columns(monkeypatch, tmp_path):
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing(phone="050-1234567", address="דיזנגוף 120"))
+
+    row = ws.append_row.call_args.args[0]
+    assert "wa.me" in row[sheets.HEADER.index("whatsapp")]
+    assert "google.com/maps" in row[sheets.HEADER.index("maps")]
+
+
+def test_save_listing_uses_user_entered_input_option_for_formulas(monkeypatch, tmp_path):
+    _isolate(monkeypatch)
+    key_path = tmp_path / "key.json"
+    key_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "some-id")
+    monkeypatch.setattr(sheets, "SERVICE_ACCOUNT_PATH", key_path)
+
+    ws = _fake_worksheet([sheets.HEADER])
+    client = MagicMock()
+    client.open_by_key.return_value.sheet1 = ws
+    with patch("gspread.service_account", return_value=client):
+        sheets.save_listing(make_listing())
+
+    assert ws.append_row.call_args.kwargs["value_input_option"] == "USER_ENTERED"
+
+
 def test_price_cell_shows_not_listed_when_missing():
     assert sheets._price_cell(None) == "not listed"
 

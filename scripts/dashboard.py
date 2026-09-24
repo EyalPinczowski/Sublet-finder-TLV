@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 import _bootstrap  # noqa: F401
 
 from src import store
+from src.contact import PRICE_INQUIRY_MESSAGE, whatsapp_link
 from src.geocode import map_url as build_map_url
 
 TOKEN_PATH = Path(__file__).resolve().parent.parent / "data" / "dashboard_token.txt"
@@ -81,6 +82,19 @@ def _card(row, token: str, score: int) -> str:
         if map_link
         else ""
     )
+    # Pre-filled price inquiry when the price is still unknown (a
+    # "potential match" is unverified precisely because of that), a
+    # plain "open the chat" link otherwise — same rule as the Telegram
+    # alert's WhatsApp button.
+    wa_message = PRICE_INQUIRY_MESSAGE if row.price is None else None
+    wa_link = whatsapp_link(row.phone, message=wa_message)
+    wa_label = "Ask about price" if row.price is None else "Contact via WhatsApp"
+    wa_link_html = (
+        f' &middot; <a href="{html.escape(wa_link)}" target="_blank" '
+        f'rel="noreferrer">\U0001F4AC {wa_label}</a>'
+        if wa_link
+        else ""
+    )
     profiles = ", ".join(row.profile_names()) or "?"
     price = f"{row.price} ILS" if row.price is not None else "Price not listed"
     # Price is a soft filter — a listing with no stated price still shows
@@ -107,7 +121,7 @@ def _card(row, token: str, score: int) -> str:
       <p class="addr">{html.escape(row.address or row.neighborhoods or 'area unknown')}</p>
       <p>{html.escape(row.summary or row.raw_text[:200])}</p>
       <p>{html.escape(row.phone or '')}</p>
-      {post_link}{map_link_html}
+      {post_link}{map_link_html}{wa_link_html}
       <p class="actions">
         {save_form}
         {dismiss_form}
