@@ -441,7 +441,15 @@ def _scan(config: Config, args) -> bool:
     # re-covers that time range (cheap: dedup already makes it a no-op for
     # anything already stored).
     sheets.flush()  # one re-sort for the whole scan, not one per listing
-    scan_state.record_scan_completed()
+    if not args.dry_run:
+        # --dry-run promises no side effects (no DB writes, no
+        # notifications) — advancing the cutoff watermark anyway would
+        # silently shrink the NEXT real scan's lookback window to "since
+        # this dry-run", even though a dry-run never actually stored
+        # anything from the time range it covered. A manual --dry-run
+        # test run (or several, back to back) must never eat into a real
+        # scan's coverage.
+        scan_state.record_scan_completed()
     word = "match" if new_match_count == 1 else "matches"
     _send_heartbeat(config, args, f"✅ Scan complete — {new_match_count} new {word}.")
     console.print("\nRun `python scripts/matches.py` to see everything found so far.")

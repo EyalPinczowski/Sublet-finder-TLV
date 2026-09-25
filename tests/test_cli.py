@@ -109,6 +109,23 @@ def test_scan_records_completion_when_all_groups_succeed(isolated_db, monkeypatc
     assert recorded == [True]
 
 
+def test_scan_dry_run_never_advances_the_watermark(isolated_db, monkeypatch):
+    """--dry-run promises no side effects — advancing scan_state's
+    watermark anyway would silently shrink the NEXT real scan's lookback
+    window to "since this dry-run", even though nothing from that time
+    range actually got stored. A manual --dry-run test must never eat
+    into a real scan's coverage."""
+    monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
+    monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
+    monkeypatch.setattr(cli, "scrape_group", lambda *a, **k: ([], True))
+    monkeypatch.setattr(cli, "jitter_between_groups", lambda: None)
+    recorded = []
+    monkeypatch.setattr(scan_state, "record_scan_completed", lambda: recorded.append(True))
+    blocked = cli._scan(make_config(), _Args(dry_run=True))
+    assert blocked is False
+    assert recorded == []
+
+
 def test_scan_skips_recording_when_a_group_is_blocked(isolated_db, monkeypatch):
     monkeypatch.setattr(cli, "open_scan_session", _fake_scan_session)
     monkeypatch.setattr(cli, "_prune_dead_links", lambda context, conn: None)
