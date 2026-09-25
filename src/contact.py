@@ -12,15 +12,23 @@ PRICE_INQUIRY_MESSAGE = "היי! ראיתי את הפוסט שלך על הדיר
 
 def whatsapp_link(phone: str | None, message: str | None = None) -> str | None:
     """A tappable WhatsApp link for a normalized Israeli mobile
-    ("05X-XXXXXXX" or similar), else None. `message` pre-fills the chat
-    via wa.me's own `text` query param when given — omit it for a plain
-    "just open the chat" link."""
+    ("05X-XXXXXXX" or similar) or an already-international number (e.g.
+    "+1 619 375 2500" — some posts give a non-Israeli WhatsApp contact),
+    else None. `message` pre-fills the chat via wa.me's own `text` query
+    param when given — omit it for a plain "just open the chat" link."""
     if not phone:
         return None
     digits = re.sub(r"\D", "", phone)
-    if len(digits) != 10 or not digits.startswith("05"):
+    if len(digits) == 10 and digits.startswith("05"):
+        # wa.me needs the full international number: 972 country code,
+        # no leading 0.
+        digits = "972" + digits[1:]
+    elif not phone.strip().startswith("+") or len(digits) < 8:
+        # Neither a recognized Israeli mobile nor an explicit
+        # international number ("+" is what marks a number as already
+        # carrying its own country code) — nothing safe to link to.
         return None
-    link = "https://wa.me/972" + digits[1:]
+    link = "https://wa.me/" + digits
     if message:
         link += f"?text={quote(message)}"
     return link

@@ -225,6 +225,14 @@ def test_extract_phone_returns_none_without_a_number():
     assert _extract_phone("סאבלט בפלורנטין, פנו בפרטי") is None
 
 
+def test_extract_phone_keeps_a_non_israeli_international_number():
+    # Some posts give a non-Israeli WhatsApp contact — the "+" marks it
+    # as already carrying its own country code, so it's kept as-is
+    # rather than forced into the Israeli 05X-XXXXXXX shape.
+    text = "Subletting my room. WhatsApp +1 619 375 2500"
+    assert _extract_phone(text) == "+1 619 375 2500"
+
+
 def test_extract_address_finds_street_and_number():
     assert _extract_address("דיזנגוף 120, 3000 שקל") == "דיזנגוף 120"
 

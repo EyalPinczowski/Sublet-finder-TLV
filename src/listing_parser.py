@@ -256,10 +256,15 @@ def _extract_lease_dates(
     return start, None, _extract_duration_days(text)
 
 
-# Israeli mobile numbers, tolerating spaces/dots/dashes and a +972/972/0
-# prefix. Best-effort — used only when the LLM path (llm_extractor.py) isn't
-# available, mirroring bgu-housing-bot's _normalize_phone.
-_PHONE_CHUNK_RE = re.compile(r"(?:\+?972|0)[\d\s().\-]{7,}")
+# Israeli mobile numbers (+972/972/0 prefix), tolerating spaces/dots/
+# dashes, OR an explicit "+<country code>..." international number (some
+# posts give a non-Israeli WhatsApp number, e.g. "+1 619 375 2500" — the
+# "+" is what marks it as already carrying its own country code, as
+# opposed to a bare domestic-looking number this fallback can't safely
+# guess a country for). Best-effort — used only when the LLM path
+# (llm_extractor.py) isn't available, mirroring bgu-housing-bot's
+# _normalize_phone for the Israeli case.
+_PHONE_CHUNK_RE = re.compile(r"(?:\+?972|\+\d{1,3}|0)[\d\s().\-]{7,}")
 
 
 def _extract_phone(text: str) -> str | None:
@@ -269,6 +274,8 @@ def _extract_phone(text: str) -> str | None:
             digits = "0" + digits[3:]
         if len(digits) == 10 and digits.startswith("05"):
             return f"{digits[:3]}-{digits[3:]}"
+        if chunk.strip().startswith("+") and len(digits) >= 8:
+            return chunk.strip()
     return None
 
 
